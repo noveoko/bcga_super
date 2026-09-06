@@ -1,4 +1,5 @@
 import random as randomlib
+import json
 
 def flt(value=1):
 	return Modifier(flt=value)
@@ -37,6 +38,39 @@ def countOperator(o):
 	else:
 		result = False
 	return result
+
+
+# instance attributes that are internal bookkeeping only, and shouldn't
+# appear in a serialized (to_dict/JSON) view of an operator
+_SERIALIZE_SKIP_ATTRS = {"count"}
+
+
+def _serialize_value(v):
+	"""
+	Converts a single attribute value from an Operator/Rule instance into
+	something JSON-serializable. Used by Operator.to_dict()/Rule.to_dict().
+	"""
+	if isinstance(v, Operator):
+		return v.to_dict()
+	if isinstance(v, Modifier):
+		return {"modifier": v.modifier, "value": _serialize_value(v.value)}
+	if isinstance(v, Random):
+		# low/high are the authored range; resolved is the value actually
+		# used for this specific generated building
+		return {"random": [v.low, v.high], "resolved": v.getValue()}
+	if isinstance(v, Param):
+		return v.getValue()
+	if isinstance(v, (list, tuple)):
+		return [_serialize_value(x) for x in v]
+	if isinstance(v, dict):
+		return {str(k2): _serialize_value(x) for k2, x in v.items()}
+	if isinstance(v, (int, float, str, bool)) or v is None:
+		return v
+	# Fallback for anything we don't have a specific rule for (e.g. internal
+	# helper objects like SplitDef/RawValue, or a plain Python function
+	# reference). This keeps to_dict() from ever raising on unknown types;
+	# it just degrades to a readable string instead of failing the export.
+	return str(v)
 
 
 class Operator:
@@ -82,6 +116,24 @@ class Operator:
 	
 	def __str__(self):
 		return self.__class__.__name__
+	
+	def to_dict(self):
+		"""
+		Returns a JSON-serializable dict describing this operator instance
+		as it was actually resolved for one specific generated building
+		(all randomness already settled, all param values resolved).
+		Only populated meaningfully when context.tracing was True during
+		execution -- see Rule.executeChildOperators().
+		"""
+		result = {"type": self.__class__.__name__}
+		for k, v in vars(self).items():
+			if k in _SERIALIZE_SKIP_ATTRS:
+				continue
+			result[k] = _serialize_value(v)
+		children = getattr(self, "executedChildren", None)
+		if children:
+			result["children"] = children
+		return result
 
 
 class RrshiftOperator:
@@ -148,12 +200,40 @@ class Rule(ComplexOperator):
 	
 	def executeChildOperators(self):
 		# execute operators inside the body of the current operator
+		tracing = context.tracing
+		trace = [] if tracing else None
 		for o in self.operators:
 			o.execute()
+			if tracing:
+				trace.append(o.to_dict())
+		if tracing:
+			# kept even after self.operators.clear() below, so a caller
+			# can serialize this Rule (and everything under it) once the
+			# whole rule tree has finished executing
+			self.executedChildren = trace
 		self.operators.clear()
 	
 	def __str__(self):
 		return self.operator.__name__
+	
+	def to_dict(self):
+		"""
+		Returns a JSON-serializable dict describing this Rule and everything
+		that executed underneath it, as actually resolved for one specific
+		generated building. Requires context.tracing to have been True
+		during execute(), otherwise "children" will be empty.
+		"""
+		result = {"type": "Rule", "rule": self.operator.__name__}
+		if hasattr(self, "value"):
+			result["value"] = _serialize_value(self.value)
+		if self.args:
+			result["args"] = [_serialize_value(a) for a in self.args]
+		if self.kwargs:
+			result["kwargs"] = {k: _serialize_value(v) for k, v in self.kwargs.items()}
+		children = getattr(self, "executedChildren", None)
+		if children:
+			result["children"] = children
+		return result
 
 
 class OperatorDef:
@@ -185,6 +265,13 @@ class State:
 
 class Context:
 	def __init__(self):
+		# when True, Rule.executeChildOperators() records a resolved,
+		# JSON-serializable trace of everything that executes (see
+		# Operator.to_dict()/Rule.to_dict()). False by default so
+		# normal generation has zero extra overhead.
+		self.tracing = False
+		# set by city_builder.py before each block is generated
+		self.cityBlock = None
 		self.reset()
 		
 	def reset(self):
@@ -256,12 +343,56 @@ def shape():
 # Parameters stuff
 #
 
-def param(value):
-	if isinstance(value, str) and value[0]=="#":
+def param(value, group=None, unit=None, min=None, max=None):
+	# Choice wraps a value to be resolved once per generated building;
+	# peek at a representative option to decide float vs color dispatch
+	probe = value.options[0] if isinstance(value, Choice) else value
+	if isinstance(probe, str) and probe[0]=="#":
 		result = ParamColor(value)
 	else:
-		result = ParamFloat(value)
+		result = ParamFloat(value, min=min, max=max)
+	result.group = group
+	result.unit = unit
 	return result
+
+class Choice:
+	"""
+	A discrete counterpart to random(low, high): picks ONE value from a
+	fixed set of options, resolved once per generated building (same
+	one-shot-resolution semantics as Random -- see getValue()).
+
+	Usage:
+		color(choice("#a83232", "#3255a8", "#32a852"))
+		STYLE = param(choice(1, 2, 3), group="Facade")
+		choice("brick", "stone", weights=[0.7, 0.3])
+	"""
+	def __init__(self, *options, weights=None):
+		if not options:
+			raise ValueError("choice() needs at least one option")
+		if weights is not None and len(weights) != len(options):
+			raise ValueError("choice() got %d weights for %d options" % (len(weights), len(options)))
+		self.options = options
+		self.weights = weights
+		self.value = None
+
+	def getValue(self):
+		if self.value is None:
+			if self.weights:
+				self.value = randomlib.choices(self.options, weights=self.weights, k=1)[0]
+			else:
+				self.value = randomlib.choice(self.options)
+		return self.value
+
+	def __str__(self):
+		return str(self.getValue())
+
+	def __float__(self):
+		return float(self.getValue())
+
+
+def choice(*options, weights=None):
+	return Choice(*options, weights=weights)
+
 
 def random(low, high):
 	return Random(low, high)
@@ -282,19 +413,32 @@ class Param:
 
 
 class ParamFloat(Param):
-	def __init__(self, value):
-		if (isinstance(value, Random)):
+	def __init__(self, value, min=None, max=None):
+		self.min = min
+		self.max = max
+		if isinstance(value, (Random, Choice)):
 			self.value = None
 			self.random = value
 		else:
-			self.value = value
+			self.value = self._clamp(value)
 			self.random = None
 		context.registerParam(self)
+	
+	def _clamp(self, value):
+		"""Clamps value into [self.min, self.max], whichever bounds were given via param(value, min=..., max=...)."""
+		if self.min is not None and value < self.min:
+			value = self.min
+		if self.max is not None and value > self.max:
+			value = self.max
+		return value
+	
+	def setValue(self, value):
+		self.value = self._clamp(value)
 	
 	def assignValue(self):
 		"""Assigns a value for the parameter. Relevant only for random parameters"""
 		if self.random:
-			self.value = self.random.getValue()
+			self.value = self._clamp(self.random.getValue())
 	
 	def __float__(self):
 		return float(self.value)
@@ -332,15 +476,30 @@ class ParamFloat(Param):
 
 class ParamColor(Param):
 	def __init__(self, value):
-		self.value = value
+		if isinstance(value, Choice):
+			self.value = None
+			self.choice = value
+		else:
+			self.value = value
+			self.choice = None
 	
 	def getValue(self):
+		self.assignValue()
 		# convert from the hex string to a tuple
 		return tuple( map(lambda c: c/255, bytes.fromhex(self.value[-6:])) )
 	
 	def setValue(self, value):
 		# convert from the tuple to a hex string
 		self.value = "#%02x%02x%02x" % tuple( map(lambda c: round(c*255), value) )
+	
+	def assignValue(self):
+		"""Assigns a value for the parameter. Relevant only for choice-based colors"""
+		if self.choice and self.value is None:
+			self.value = self.choice.getValue()
+	
+	def __str__(self):
+		self.assignValue()
+		return self.value
 
 
 class Random:
@@ -389,6 +548,16 @@ class Random:
 	
 	def __abs__(self):
 		return abs(self.getValue())
+
+
+def to_json(rule, **kwargs):
+	"""
+	Convenience wrapper: serializes a Rule/Operator (or its already-computed
+	to_dict() result) to a JSON string. kwargs are passed through to
+	json.dumps (e.g. indent=2).
+	"""
+	data = rule.to_dict() if hasattr(rule, "to_dict") else rule
+	return json.dumps(data, **kwargs)
 
 
 context = Context()

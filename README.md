@@ -12,6 +12,15 @@ Example sets of BCGA rules:
 * [simple01.py](https://github.com/vvoovv/bcga-examples/blob/master/examples/simple01.py), [video](https://www.youtube.com/watch?v=GixKhqrdANs)
 * [house_01.py](https://github.com/vvoovv/bcga-examples/blob/master/examples/house_01.py), [video](http://www.youtube.com/watch?v=ZJDHtPAF9d8)
 
+### Headless city generation (1927 Polish town)
+
+```powershell
+python -c "from pro.city.layout import generate_polish_town_layout, save_city_layout; save_city_layout(generate_polish_town_layout(seed=1927), 'out/polish_town_1927.json')"
+blender --background --factory-startup --python city_builder.py -- --layout out/polish_town_1927.json --rule examples/polish_town_1927.py --output out/polish_town_1927.blend
+```
+
+Plots are street-aligned rectangles (not whole Voronoi cells). The rule file is `examples/polish_town_1927.py`. Single buildings: `blender --background --python generate.py -- --rule examples/polish_town_1927.py --output house.blend`.
+
 The basic concepts of BCGA are explained in the [tutorial](https://github.com/vvoovv/bcga/wiki/Tutorial).
 
 twitter: [@prokitektura](https://twitter.com/prokitektura)

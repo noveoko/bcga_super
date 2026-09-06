@@ -19,6 +19,11 @@ from .op_inset2 import inset2
 from .op_rectangle import rectangle
 
 from .op_hip_roof import hip_roof
+from .op_gable_roof import gable_roof
+from .op_round_corners import round_corners
+from .op_chance import chance
+from .op_switch import switch
+from .base import choice
 
 from .op_copy import copy
 
@@ -50,3 +55,30 @@ def rule(operator):
 
 def repeat(*args):
     return args
+
+
+def getMetadata(module):
+    """
+    Reads optional rule-file metadata, following a simple convention: a
+    rule file may declare any of these module-level variables (nothing is
+    required -- rule files that don't use this convention just get empty
+    strings/lists back):
+
+        __version__ = "1.2.0"
+        __author__ = "Jane Doe"
+        __description__ = "A four-story office building with a central atrium"
+        __tags__ = ["commercial", "office", "modern"]
+
+    Returns a dict with keys "version", "author", "description", "tags"
+    (tags is always a list; the others are always strings). This is a
+    plain-data convention only, with nothing to register or enforce, so
+    any rule file can adopt it just by adding the variables above -- and
+    it has no bpy dependency, so it's usable from generate.py/bcga_tui.py
+    without launching Blender.
+    """
+    return {
+        "version": getattr(module, "__version__", "") or "",
+        "author": getattr(module, "__author__", "") or "",
+        "description": getattr(module, "__description__", "") or "",
+        "tags": list(getattr(module, "__tags__", None) or []),
+    }

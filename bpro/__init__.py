@@ -1,5 +1,6 @@
-import imp
+import importlib.util
 import os
+import sys
 import inspect
 import bpy
 import bmesh
@@ -23,6 +24,10 @@ from .op_inset import Inset
 from .op_inset2 import Inset2
 from .op_rectangle import Rectangle
 from .op_hip_roof import HipRoof
+from .op_gable_roof import GableRoof
+from .op_round_corners import RoundCorners
+import pro.op_chance
+import pro.op_switch
 from .op_copy import Copy
 from .op_translate import Translate
 
@@ -48,11 +53,25 @@ def buildFactory():
     factory["Inset2"] = Inset2
     factory["Rectangle"] = Rectangle
     factory["HipRoof"] = HipRoof
+    factory["GableRoof"] = GableRoof
+    factory["RoundCorners"] = RoundCorners
+    factory["Chance"] = pro.op_chance.Chance
+    factory["Switch"] = pro.op_switch.Switch
     factory["Copy"] = Copy
     factory["Translate"] = Translate
 
 
-def apply(ruleFile, startRule="Begin"):
+def apply(ruleFile, startRule="Begin", trace=False):
+    """
+    Args:
+        trace (bool): when True, a full resolved JSON-serializable trace of
+            everything the rule tree actually did for this specific
+            generated building is made available afterwards as
+            context.buildingTrace (a dict; see pro.base.Rule.to_dict()).
+            Does not change this function's return value, so existing
+            callers doing `module, params = bpro.apply(...)` keep working
+            unchanged. False by default: zero extra overhead when unused.
+    """
     from .bl_util import create_rectangle
 
     blenderContext = context.blenderContext
@@ -114,7 +133,10 @@ def apply(ruleFile, startRule="Begin"):
         def removeChildOperators(self, numParts): pass
     context.operator = dummy()
     # evaluate the rule set
-    getattr(module, startRule)().execute()
+    context.tracing = bool(trace)
+    rootRule = getattr(module, startRule)()
+    rootRule.execute()
+    context.buildingTrace = rootRule.to_dict() if trace else None
 
     # remove unused faces from context.facesForRemoval
     bmesh.ops.delete(bm, geom=context.facesForRemoval, context='FACES')
@@ -142,13 +164,18 @@ def isParam(member):
 
 def getModule(ruleFile):
     """Returns Python module object given a path to the rule file"""
-    # remove extension from ruleFile if it was provided
-    ruleFile = os.path.splitext(ruleFile)[0]
-    moduleName = os.path.basename(ruleFile)
-    _file, _pathname, _description = imp.find_module(
-        moduleName, [os.path.dirname(ruleFile)])
-    module = imp.load_module(moduleName, _file, _pathname, _description)
-    _file.close()
+    # remove extension from ruleFile if it was provided, then add it back
+    # explicitly so we always resolve to a concrete .py file on disk
+    ruleFile = os.path.splitext(ruleFile)[0] + ".py"
+    moduleName = os.path.basename(ruleFile)[:-3]
+
+    spec = importlib.util.spec_from_file_location(moduleName, ruleFile)
+    if spec is None or spec.loader is None:
+        raise ImportError("Could not load BCGA rule file '%s'" % ruleFile)
+    module = importlib.util.module_from_spec(spec)
+    # register in sys.modules so relative imports / reload() behave normally
+    sys.modules[moduleName] = module
+    spec.loader.exec_module(module)
     return module
 
 

@@ -2,14 +2,16 @@ import pro
 from pro import context
 from .polygon import Roof
 from .polygon_manager import Manager
+from .bl_util import get_roof_shape
 
 class HipRoof(pro.op_hip_roof.HipRoof):
     def execute(self):
         shape = context.getState().shape
-        face = shape.face
+        roofShape = get_roof_shape(shape)
+        face = roofShape.face
         self.init(len(face.verts))
         manager = Manager()
-        roof = Roof(face.verts, shape.getNormal(), manager)
+        roof = Roof(face.verts, roofShape.getNormal(), manager)
         # soffits
         if self.soffits:
             manager.rule = self.soffit
@@ -21,7 +23,7 @@ class HipRoof(pro.op_hip_roof.HipRoof):
         # hip roof itself
         manager.rule = self.face
         roof.roof(*self.pitches)
-        shape.delete()
+        roofShape.delete()
         # finalizing: if there is a rule for the shape, execute it
         for entry in manager.shapes:
             context.pushState(shape=entry[0])

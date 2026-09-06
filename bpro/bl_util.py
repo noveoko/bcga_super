@@ -3,6 +3,62 @@ import bmesh
 newObjectName = "BCGA"
 
 
+def create_footprint_from_points(blenderContext, points, offset=(0, 0)):
+    """
+    Like create_rectangle(), but builds an arbitrary N-gon footprint from a
+    plain list of (x, y) points (in meters, local planar coordinates),
+    optionally offset (e.g. to position a city block at its centroid).
+    """
+    if blenderContext.object:
+        bpy.ops.object.select_all(action="DESELECT")
+    scene = blenderContext.scene
+    ox, oy = offset
+    mesh = bpy.data.meshes.new(newObjectName)
+    mesh.from_pydata(
+        [(x - ox, y - oy, 0) for x, y in points], [], [tuple(range(len(points)))]
+    )
+    obj = bpy.data.objects.new(newObjectName, mesh)
+    obj.location = scene.cursor.location
+    obj.location.x += ox
+    obj.location.y += oy
+    scene.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    mesh.update()
+    return obj
+
+
+def create_footprint_from_geojson(blenderContext, geojsonPathOrData):
+    """
+    Like create_rectangle(), but builds an arbitrary N-gon footprint from a
+    GeoJSON Polygon (see pro.geojson_import.load_footprint()) instead of a
+    fixed rectangle. Returns the loaded metadata dict (origin lon/lat,
+    point count) so callers can report it.
+    """
+    from pro.geojson_import import load_footprint
+    points, metadata = load_footprint(geojsonPathOrData)
+    create_footprint_from_points(blenderContext, points)
+    return metadata
+
+
+def get_roof_shape(shape):
+    """
+    Returns the Shape2d to apply a roof to, given the current shape, which
+    might be:
+      - a Shape2d already (has .face directly) -- the common case when
+        called after decompose(top >> ...), or on a fresh footprint.
+      - a Shape3d (e.g. right after extrude(), before any decompose()) --
+        in this case, pick the constituent face whose normal points most
+        upward (+Z), the natural "roof goes on the top face" reading.
+    Callers can use the returned Shape2d's .face and .getNormal().
+    """
+    if hasattr(shape, "face"):
+        return shape
+    faces = getattr(shape, "shapes", None)
+    if not faces:
+        raise ValueError("Can't find a face to apply a roof to on this shape")
+    return max(faces, key=lambda s: s.face.normal.z)
+
+
 def create_rectangle(blenderContext, sizeX, sizeY):
     sizeX /= 2
     sizeY /= 2
@@ -15,14 +71,14 @@ def create_rectangle(blenderContext, sizeX, sizeY):
          (sizeX, sizeY, 0), (-sizeX, sizeY, 0)), [], ((0, 1, 2, 3),)
     )
     obj = bpy.data.objects.new(newObjectName, mesh)
-    obj.location = scene.cursor_location
+    obj.location = scene.cursor.location
     scene.collection.objects.link(obj)
     bpy.context.view_layer.objects.active = obj
     mesh.update()
 
 
 def align_view(obj):
-    obj.select_set(state=True, view_layer=None)
+    obj.select_set(True)
     bpy.ops.view3d.view_selected()
 
 

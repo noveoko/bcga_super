@@ -5,15 +5,28 @@ from pro import context
 
 class MaterialManager:
 
+    # Node-based material creation works the same way for every modern
+    # Blender render engine (Cycles, EEVEE, EEVEE Next), so a single
+    # engine implementation is used as the default for any engine
+    # identifier we don't recognize. This also future-proofs against
+    # new engine identifiers Blender adds later.
+    defaultEngine = None
+
     def __init__(self):
         # a dict materialName->materialIndex, where materialIndex is the material index for the active Blender object
         self.reg = {}
         # initialize engines
+        # NOTE: "BLENDER_RENDER" (Blender Internal) was removed in Blender 2.80
+        # and material.texture_slots along with it, so that legacy engine
+        # is intentionally not supported here. Any unrecognized engine
+        # identifier falls back to the node-based implementation below.
+        nodeBasedRender = CyclesRender()
         self.engines = {
-            "BLENDER_RENDER": BlenderRender(),
-            "CYCLES": CyclesRender(),
-            "EEVEE": CyclesRender()
+            "CYCLES": nodeBasedRender,
+            "BLENDER_EEVEE": nodeBasedRender,
+            "BLENDER_EEVEE_NEXT": nodeBasedRender,
         }
+        MaterialManager.defaultEngine = nodeBasedRender
 
     def getMaterial(self, name):
         """
@@ -62,8 +75,9 @@ class MaterialManager:
         Creates a new material and calls self.setMaterial(...)
         """
         engine = context.blenderContext.scene.render.engine
+        renderer = self.engines.get(engine, self.defaultEngine)
         try:
-            material = self.engines[engine].createMaterial(name, textures)
+            material = renderer.createMaterial(name, textures)
         except RuntimeError:
             material = None
         else:
@@ -80,30 +94,9 @@ class MaterialManager:
         #     shape.face[context.bm.faces.layers.tex.active].image = slot.texture.image
 
 
-class Render:
-    def createTexture(self, name, texture):
-        blenderTexture = bpy.data.textures.new(name, type="IMAGE")
-        blenderTexture.image = bpy.data.images.load(texture.path)
-        blenderTexture.use_alpha = True
-        return blenderTexture
-
-
-class BlenderRender(Render):
+class CyclesRender:
     def createMaterial(self, name, textures):
         texture = textures[0]
-        blenderTexture = self.createTexture(name, texture)
-        material = bpy.data.materials.new(name)
-        textureSlot = material.texture_slots.add()
-        textureSlot.texture = blenderTexture
-        textureSlot.texture_coords = "UV"
-        textureSlot.uv_layer = texture.layer
-        return material
-
-
-class CyclesRender(Render):
-    def createMaterial(self, name, textures):
-        texture = textures[0]
-        #blenderTexture = self.createTexture(name, texture)
         material = bpy.data.materials.new(name)
         material.use_nodes = True
         nodes = material.node_tree
