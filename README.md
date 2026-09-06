@@ -1,34 +1,126 @@
-### BCGA (Computer Generated Architecture for Blender)
+# BCGA Super
 
-BCGA is a procedural and iterative approach to generate architectural 3D models. A set of small Python functions called rules is used to generate 3D models of buildings. Each subsequent rule refines the model and adds additional details. The concept of BCGA was inspired by CGA shape grammar developed in ETH Zurich.
+Fork of [vvoovv/bcga](https://github.com/vvoovv/bcga): Computer Generated Architecture for Blender. Buildings are Python **rule files** (a CGA-style shape grammar). This fork adds headless generation, a city layout pipeline, and a 1927 Polish-town example that places **street-aligned houses**, not one pyramid per Voronoi cell.
 
-Here is a brief description of the 3D model generation process on a simple example. The process starts from a 2D building outline. Its extrusion is created with the desired height. The extruded 3D shape is decomposed into a number of vertical rectangles corresponding to building facades and the upper polygon used as the base for the building roof. Floors are cut for each facade. Each floor is cut into sections with windows. Each section can be refined further.
+Tested with **Blender 5.1** on Windows. Layout generation is ordinary Python (no `bpy`).
 
-Some parameters of the set of rules can be defined as accessible from outside. They can be changed in the Blender panel. The resulting changes in the generated 3D model are shown interactively in the Blender 3D View window.
+## What it does
 
-BCGA can be used to code existing buildings from a number of photos as well as to generate imaginary cities with desired styles of buildings.
+1. **Single building** — apply a rule to a rectangular footprint, export `.blend` / `.obj` / `.glb` / `.fbx`.
+2. **City** — Voronoi streets → JSON layout → one mesh per plot in Blender, plus roads, ground, sun, camera.
+3. **1927 Polish miasteczko** — Magdeburg-plan **rynek**, parcels along street edges (~7–14 × 8–16 m), kamienice / cottages / workshops / barns / church / ratusz / synagogue, metric façades, gable/hip roofs, shopfronts, chimneys.
 
-Example sets of BCGA rules:
-* [simple01.py](https://github.com/vvoovv/bcga-examples/blob/master/examples/simple01.py), [video](https://www.youtube.com/watch?v=GixKhqrdANs)
-* [house_01.py](https://github.com/vvoovv/bcga-examples/blob/master/examples/house_01.py), [video](http://www.youtube.com/watch?v=ZJDHtPAF9d8)
+## Requirements
 
-### Headless city generation (1927 Polish town)
+| Piece | Needs |
+|---|---|
+| Layout JSON (`pro/city/layout.py`) | Python 3.11+, `numpy`, `scipy` |
+| `city_builder.py` / `generate.py` | `blender` on `PATH` (or `BLENDER_EXECUTABLE`) |
+| TUI (`bcga_tui.py`) | `pip install rich`, plus Blender |
+| Tests | `pip install pytest numpy scipy` |
 
 ```powershell
+pip install numpy scipy pytest rich
+```
+
+## Generate a 1927 Polish town
+
+Two steps. Layout is **not** run inside Blender.
+
+```powershell
+mkdir out -ErrorAction SilentlyContinue
+
 python -c "from pro.city.layout import generate_polish_town_layout, save_city_layout; save_city_layout(generate_polish_town_layout(seed=1927), 'out/polish_town_1927.json')"
+
 blender --background --factory-startup --python city_builder.py -- --layout out/polish_town_1927.json --rule examples/polish_town_1927.py --output out/polish_town_1927.blend
 ```
 
-Plots are street-aligned rectangles (not whole Voronoi cells). The rule file is `examples/polish_town_1927.py`. Single buildings: `blender --background --python generate.py -- --rule examples/polish_town_1927.py --output house.blend`.
+Open `out/polish_town_1927.blend`. `--max-blocks N` builds only the first N houses (preview). `--skip-roads` / `--skip-ground` skip the cobble ribbons and ground disk.
 
-The basic concepts of BCGA are explained in the [tutorial](https://github.com/vvoovv/bcga/wiki/Tutorial).
+Same layout CLI:
 
-twitter: [@prokitektura](https://twitter.com/prokitektura)
+```powershell
+python pro/city/layout.py --style polish --output out/polish_town_1927.json --seed 1927
+```
 
-Thread at blenderartists.org: http://blenderartists.org/forum/showthread.php?351081-Addon-BCGA-Computer-Generated-Architecture-for-Blender-3D-buildings-with-Python
+Each **plot** is a 4-vertex rectangle; vertex 0→1 is the street edge, so the rule’s `front` is the street façade. `context.cityBlock` is that plot (`role`, `roof`, `wall`, `frontage`, `storeys`, `width`, `depth`).
 
+## Generate one building
 
-## Donations
-If you like BCGA, please consider making a donation:
+```powershell
+blender --background --factory-startup --python generate.py -- --rule examples/polish_town_1927.py --output out/house.blend --width 10 --depth 12 --seed 1927
+```
+
+`--count 4 --spacing 6` lays variants side by side. `--export-json trace.json` writes the resolved rule tree (`Rule.to_dict()`).
+
+## Generic organic city
+
+Voronoi blocks without parceling (one building per cell — the old demo):
+
+```powershell
+python pro/city/layout.py --output out/city.json --blocks 40 --radius 150 --seed 1
+blender --background --factory-startup --python city_builder.py -- --layout out/city.json --rule examples/city_building.py --output out/city.blend
+```
+
+`examples/city_building.py` reads `context.cityBlock["density"]` (1 at center, 0 at the edge) and varies height / colour / roof.
+
+## Blender addon
+
+This repo is still a Blender addon (`bl_info` in `__init__.py`; operators live in `addon.py`).
+
+1. Clone or copy the folder into Blender’s addons directory, **or** *Edit → Preferences → Add-ons → Install* from the repo zip.
+2. Enable **BCGA**.
+3. 3D View sidebar → **BCGA**: set a footprint, pick a rule `.py` (text block or external file), **Apply**.
+
+Rule params with `param(..., group=..., unit=...)` show grouped in the Apply panel.
+
+## Terminal UI
+
+Iterate on rule files without opening the Blender GUI:
+
+```powershell
+python bcga_tui.py examples
+```
+
+Needs `rich` and a `blender` executable.
+
+## Rule language (this fork)
+
+On top of upstream BCGA (`extrude`, `split`, `decompose`, `hip_roof`, `color`, …):
+
+| Call | Purpose |
+|---|---|
+| `choice("a", "b", weights=[0.7, 0.3])` | One discrete value per building |
+| `chance((0.6, RuleA()), (0.4, RuleB()))` | Pick one rule |
+| `switch(value, {"x": RuleX()}, default=RuleY())` | Branch |
+| `gable_roof(pitch)` | Gable on a **4-edge** rectangle |
+| `param(value, group="Facade", unit="m")` | Sidebar grouping |
+
+`generate.py` / `city_builder.py` set `context.cityBlock` before each apply. Standalone rules should fall back when it is `None`.
+
+## Tests
+
+```powershell
+python -m pytest
+```
+
+Layout and parceler tests need numpy/scipy. Integration tests that launch Blender are marked `integration` and skipped by default (`pytest.ini`).
+
+## Layout vs geometry
+
+- `pro/city/layout.py` + `pro/city/parcels.py` — pure Python, writes JSON (`blocks`, `roads`, `plots`).
+- `city_builder.py` — Blender only: footprints, rules, chimneys, rynek stalls, road ribbons, export.
+
+Do not import `numpy`/`scipy` from inside Blender.
+
+## Upstream BCGA
+
+Original project: [vvoovv/bcga](https://github.com/vvoovv/bcga). Tutorial: [wiki](https://github.com/vvoovv/bcga/wiki/Tutorial). Example rules: [bcga-examples](https://github.com/vvoovv/bcga-examples) ([simple01](https://github.com/vvoovv/bcga-examples/blob/master/examples/simple01.py), [house_01](https://github.com/vvoovv/bcga-examples/blob/master/examples/house_01.py)).
+
+twitter: [@prokitektura](https://twitter.com/prokitektura) · [blenderartists thread](https://blenderartists.org/t/addon-bcga-computer-generated-architecture-for-blender-3d-buildings-with-python/551081)
+
+## Donations (upstream)
+
+If you like the original BCGA, consider a donation:
 
 [![Please donate](https://www.paypalobjects.com/en_US/GB/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=ZZ7CHNYKWYYZE)
