@@ -88,6 +88,39 @@ def _rectangle_on_edge(a, b, t0, frontage, depth, inward):
     return [p0, p1, p2, p3]
 
 
+# Zoning-style lot-dimension table, the way a real subdivision ordinance
+# specifies minimum/maximum frontage and depth per zoning district instead
+# of a single formula interpolated against one density number. Keyed by
+# the same "role" values _stamp_plot_type already assigns (civic roles
+# fall back to the district they read closest to -- see ROLE_TO_ZONE).
+ZONING_RULES = {
+    # tight, deep commercial-frontage lots on the market square/main street
+    "commercial": dict(min_frontage=6.0, max_frontage=9.0, min_depth=12.0, max_depth=20.0, gap=0.3),
+    # dense inner-ring rowhouse-style plots (kamienice, workshops)
+    "residential_dense": dict(min_frontage=6.5, max_frontage=11.0, min_depth=8.0, max_depth=15.0, gap=0.4),
+    # looser mid-ring lots (cottages)
+    "residential_mid": dict(min_frontage=8.0, max_frontage=13.0, min_depth=7.5, max_depth=14.0, gap=1.0),
+    # spacious edge-of-town lots (villas, barns) -- more frontage and gap
+    "residential_edge": dict(min_frontage=10.0, max_frontage=16.0, min_depth=7.0, max_depth=13.0, gap=2.0),
+}
+
+# Decision tree from a block/plot's *role* (already assigned by
+# _assign_plot_types based on function: civic, commercial frontage,
+# inner-ring housing, etc.) to the zoning district whose dimensions apply.
+# This is what makes lot size follow *use*, the way an actual plat does,
+# rather than only distance-from-center.
+ROLE_TO_ZONE = {
+    "church": "commercial", "ratusz": "commercial", "synagogue": "commercial",
+    "workshop": "residential_dense", "kamienica": "residential_dense",
+    "cottage": "residential_mid",
+    "villa": "residential_edge", "barn": "residential_edge",
+}
+
+
+def zone_for_role(role):
+    return ROLE_TO_ZONE.get(role, "residential_dense")
+
+
 def parcel_block(
     polygon,
     density=0.5,
@@ -98,12 +131,23 @@ def parcel_block(
     max_depth=16.0,
     min_edge=8.0,
     corner_margin=0.6,
+    zone=None,
 ):
     """
     Place rectangular plots along every long edge of a convex block.
 
     Returns a list of dicts: polygon (4 CCW pts, street edge first),
     width, depth, centroid. Caller assigns role/roof/wall.
+
+    zone: optional key into ZONING_RULES (e.g. "commercial",
+        "residential_dense"). When given, lot frontage/depth/gap come from
+        that zoning district's rule table instead of being interpolated
+        purely from `density` -- e.g. a commercial frontage lot near the
+        edge of town still gets tight, deep commercial dimensions, and a
+        villa lot near downtown still gets spacious edge-style dimensions,
+        which the old density-only formula couldn't express. When zone is
+        None (the default), behavior is unchanged from before: dimensions
+        are interpolated from density alone.
     """
     if rng is None:
         rng = randomlib.Random()
@@ -111,16 +155,22 @@ def parcel_block(
         return []
 
     center = _centroid(polygon)
-    # tighter, shallower lots downtown; looser cottages on the edge
-    frontage_lo = min_frontage + (1.0 - density) * 1.5
-    frontage_hi = max_frontage - density * 2.0
-    if frontage_hi < frontage_lo + 0.5:
-        frontage_hi = frontage_lo + 0.5
-    depth_lo = min_depth + density * 1.5
-    depth_hi = max_depth - (1.0 - density) * 3.0
-    if depth_hi < depth_lo + 0.5:
-        depth_hi = depth_lo + 0.5
-    gap = 0.25 + (1.0 - density) * 1.8
+    if zone is not None:
+        rule = ZONING_RULES.get(zone, ZONING_RULES["residential_dense"])
+        frontage_lo, frontage_hi = rule["min_frontage"], rule["max_frontage"]
+        depth_lo, depth_hi = rule["min_depth"], rule["max_depth"]
+        gap = rule["gap"]
+    else:
+        # tighter, shallower lots downtown; looser cottages on the edge
+        frontage_lo = min_frontage + (1.0 - density) * 1.5
+        frontage_hi = max_frontage - density * 2.0
+        if frontage_hi < frontage_lo + 0.5:
+            frontage_hi = frontage_lo + 0.5
+        depth_lo = min_depth + density * 1.5
+        depth_hi = max_depth - (1.0 - density) * 3.0
+        if depth_hi < depth_lo + 0.5:
+            depth_hi = depth_lo + 0.5
+        gap = 0.25 + (1.0 - density) * 1.8
 
     plots = []
     n = len(polygon)
@@ -138,11 +188,11 @@ def parcel_block(
 
         t = corner_margin
         limit = edge_len - corner_margin
-        while t + min_frontage <= limit:
+        while t + frontage_lo <= limit:
             remaining = limit - t
             frontage = rng.uniform(frontage_lo, frontage_hi)
             if frontage > remaining:
-                if remaining >= min_frontage:
+                if remaining >= frontage_lo:
                     frontage = remaining
                 else:
                     break

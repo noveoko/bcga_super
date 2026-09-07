@@ -40,6 +40,10 @@ def parse_args(argv=None):
     parser.add_argument("--output", required=True, help="Output .blend/.obj/.glb/.fbx file")
     parser.add_argument("--road-width-primary", type=float, default=8.0)
     parser.add_argument("--road-width-secondary", type=float, default=4.5)
+    parser.add_argument("--road-width-local", type=float, default=3.0,
+                        help="Width for 'local' hierarchy roads, used when the layout was "
+                             "generated with road_classification='functional' (arterial/"
+                             "collector/local) instead of the default primary/secondary scheme")
     parser.add_argument("--setback", type=float, default=3.0,
                         help="Shrink each building footprint toward its centroid (meters)")
     parser.add_argument("--skip-roads", action="store_true")
@@ -301,11 +305,20 @@ def setup_scene(radius):
     bpy.ops.object.select_all(action="DESELECT")
 
 
-def build_roads(layout, widthPrimary, widthSecondary):
+def build_roads(layout, widthPrimary, widthSecondary, widthLocal=3.0):
     """
-    Builds two curve objects (RoadsPrimary, RoadsSecondary), one spline per
-    road segment of that hierarchy, each with a Geometry Nodes modifier
-    turning it into a flat ribbon mesh of the appropriate width.
+    Builds one curve object per road hierarchy present in the layout, each
+    with a Geometry Nodes modifier turning it into a flat ribbon mesh of
+    the appropriate width.
+
+    Supports both the default two-tier scheme (primary/secondary, from
+    generate_city_layout's distance-based classification) and the
+    three-tier functional scheme (arterial/collector/local, produced when
+    the layout was generated with road_classification="functional" --
+    see pro/city/layout.py's _classify_roads_functional). Any hierarchy
+    value actually present in layout["roads"] that isn't in the style
+    table below falls back to the "secondary"/"collector" styling rather
+    than being silently dropped.
     """
     import bpy
 
@@ -313,12 +326,24 @@ def build_roads(layout, widthPrimary, widthSecondary):
     widthSocketId = _width_socket_id(nodeGroup)
     matSocketId = _socket_id(nodeGroup, "Material")
     builtObjects = []
+
+    styles = {
+        "primary": dict(width=widthPrimary, color=(0.42, 0.39, 0.35), matName="CobblePrimary"),
+        "arterial": dict(width=widthPrimary, color=(0.42, 0.39, 0.35), matName="CobblePrimary"),
+        "secondary": dict(width=widthSecondary, color=(0.36, 0.31, 0.24), matName="PackedEarth"),
+        "collector": dict(width=widthSecondary, color=(0.36, 0.31, 0.24), matName="PackedEarth"),
+        "local": dict(width=widthLocal, color=(0.33, 0.29, 0.24), matName="LocalLane"),
+    }
+    fallback = dict(width=widthSecondary, color=(0.36, 0.31, 0.24), matName="PackedEarth")
+
+    hierarchiesPresent = sorted({r["hierarchy"] for r in layout["roads"]})
     materials = {
-        "primary": _diffuse_material("CobblePrimary", (0.42, 0.39, 0.35), 0.92),
-        "secondary": _diffuse_material("PackedEarth", (0.36, 0.31, 0.24), 0.95),
+        h: _diffuse_material(styles.get(h, fallback)["matName"], styles.get(h, fallback)["color"], 0.92)
+        for h in hierarchiesPresent
     }
 
-    for hierarchy, width in (("primary", widthPrimary), ("secondary", widthSecondary)):
+    for hierarchy in hierarchiesPresent:
+        width = styles.get(hierarchy, fallback)["width"]
         segments = [r for r in layout["roads"] if r["hierarchy"] == hierarchy]
         if not segments:
             continue
@@ -492,7 +517,7 @@ def main():
         print("Built %d block(s), %d failed" % (built, failed))
 
     if not args.skip_roads:
-        roadObjects = build_roads(layout, args.road_width_primary, args.road_width_secondary)
+        roadObjects = build_roads(layout, args.road_width_primary, args.road_width_secondary, args.road_width_local)
         print("Built %d road curve object(s)" % len(roadObjects))
 
     if not args.skip_ground:

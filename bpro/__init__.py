@@ -30,6 +30,9 @@ import pro.op_chance
 import pro.op_switch
 from .op_copy import Copy
 from .op_translate import Translate
+from .op_partition import Partition
+from .op_stairwell import Stairwell
+from .op_openings import Openings
 
 from pro.base import Param
 
@@ -59,6 +62,9 @@ def buildFactory():
     factory["Switch"] = pro.op_switch.Switch
     factory["Copy"] = Copy
     factory["Translate"] = Translate
+    factory["Partition"] = Partition
+    factory["Stairwell"] = Stairwell
+    factory["Openings"] = Openings
 
 
 def apply(ruleFile, startRule="Begin", trace=False):

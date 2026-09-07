@@ -63,11 +63,30 @@ SHOP_GLASS = param("#4a5a62", group="Facade")
 PLINTH_COLOR = param(choice("#7a6b56", "#6e6254", "#8a7a64"), group="Facade")
 WOOD_COLOR = param(choice("#5c4030", "#4a3224", "#6b4a32"), group="Facade")
 CORNICE_COLOR = param(choice("#d0c4b0", "#c4b49a", "#b8a888"), group="Facade")
+SLAB_COLOR = param("#9a9284", group="Interior")  # concrete/screed edge & soffit
+SLAB_TOP_COLOR = param(choice("#8a6a48", "#7a5c3e", "#9c8060"), group="Interior")  # timber floor finish
+INTERIOR_WALL_COLOR = param(choice("#d8d0c4", "#cfc6b8", "#e2dacd"), group="Interior")
+ROOM_FLOOR_COLOR = param(choice("#7a5a3a", "#6e4e32", "#8a6844"), group="Interior")
+
+# --- Interior floor slabs --------------------------------------------------
+# One horizontal plate per storey level, plus one under the roof (the top
+# floor's ceiling/attic floor) -- storeys+1 plates total, the same count a
+# real building of this height would actually pour/frame. Elevations are
+# derived from the exact same PLINTH_H/GROUND_H/UPPER_H bands StreetFacade()
+# already splits the exterior wall into, so a slab always lines up with the
+# facade's floor lines instead of being an independent guess.
+SLAB_H = 0.18
+STAIR_W = 1.05  # side-wall well, split off the street-frontage edge
+SLAB_ELEVATIONS = [0.0]
+for _i in range(1, storeys):
+    SLAB_ELEVATIONS.append(PLINTH_H + GROUND_H + (_i - 1) * UPPER_H)
+SLAB_ELEVATIONS.append(PLINTH_H + GROUND_H + max(0, storeys - 1) * UPPER_H)
 
 
 @rule
 def Begin():
     color(FACADE_COLOR)
+    copy(FloorSlabs())
     extrude(
         WALL_H,
         front >> StreetFacade(),
@@ -76,6 +95,88 @@ def Begin():
         top >> PitchedRoof(),
         inheritMaterialSide=True,
     )
+
+
+@rule
+def FloorSlabs():
+    # runs on a COPY of the flat ground-level footprint, taken before
+    # Begin()'s extrude() turns the original into the wall volume, so each
+    # slab below reuses that same untouched 2D footprint independently.
+    # Occupied storeys also get an interior partition copy sitting on top
+    # of that storey's slab; the last elevation is the attic plate only.
+    _well = storeys >= 2 and role not in ("church", "synagogue")
+    for i, elevation in enumerate(SLAB_ELEVATIONS[:-1]):
+        copy(SlabAt(elevation, cut_well=(_well and i > 0)))
+        if role not in ("church", "synagogue"):
+            clear_h = SLAB_ELEVATIONS[i + 1] - elevation - SLAB_H
+            copy(InteriorAt(elevation + SLAB_H, clear_h))
+    copy(SlabAt(SLAB_ELEVATIONS[-1], cut_well=_well))
+
+
+@rule
+def SlabAt(elevation, cut_well=False):
+    translate(0, 0, elevation)
+    if cut_well:
+        split(x, STAIR_W >> delete(), flt() >> SlabSolid())
+    else:
+        SlabSolid()
+
+
+@rule
+def SlabSolid():
+    color(SLAB_COLOR)
+    extrude(SLAB_H, top >> SlabTop(), inheritMaterialSide=True)
+
+
+@rule
+def SlabTop():
+    color(SLAB_TOP_COLOR)
+
+
+@rule
+def InteriorAt(elevation, clear_h):
+    translate(0, 0, elevation)
+    if storeys >= 2 and role not in ("church", "synagogue"):
+        split(
+            x,
+            STAIR_W >> StairFlight(clear_h + SLAB_H),
+            flt() >> RoomsOnly(clear_h),
+        )
+    else:
+        RoomsOnly(clear_h)
+
+
+@rule
+def StairFlight(rise):
+    color(WOOD_COLOR)
+    stairwell(rise, tread=0.27, riser=0.18)
+
+
+@rule
+def RoomsOnly(clear_h):
+    partition(
+        wall=InteriorWall(max(0.5, clear_h)),
+        room=RoomFinish(),
+        thickness=0.12,
+        margin=0.18,
+        min_span=2.0,
+        max_span=3.2 if role in ("cottage", "barn", "villa") else 4.5,
+        corridor=(1.15 if (role in ("kamienica", "ratusz") or frontage == "shop") else None),
+        seed=int(_plot.get("id", 0)),
+        door_width=0.9,
+        door_height=2.1,
+    )
+
+
+@rule
+def InteriorWall(h):
+    color(INTERIOR_WALL_COLOR)
+    openings(h)
+
+
+@rule
+def RoomFinish():
+    color(ROOM_FLOOR_COLOR)
 
 
 @rule

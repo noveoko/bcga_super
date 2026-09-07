@@ -29,6 +29,13 @@ from .op_copy import copy
 
 from .op_translate import translate
 
+from .op_partition import partition
+from .op_partition import wall, room
+
+from .op_stairwell import stairwell
+
+from .op_openings import openings
+
 from .base import flt, rel
 from .base import shape
 from .base import param, random
