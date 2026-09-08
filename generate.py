@@ -129,6 +129,8 @@ def main():
         sys.exit(1)
 
     traces = [] if args.export_json else None
+    proContext.allCeilingLights = []
+    proContext.allGameDoors = []
 
     for i in range(max(1, args.count)):
         # bpro.apply() creates its own default rectangle footprint via
@@ -159,6 +161,15 @@ def main():
         with open(jsonPath, "w") as f:
             json.dump(payload, f, indent=2)
         print("Wrote building trace JSON to %s" % jsonPath)
+
+    allLights = getattr(proContext, "allCeilingLights", None) or []
+    if allLights:
+        from pro.lights import lights_sidecar
+        import json
+        lightsPath = os.path.splitext(os.path.abspath(args.output))[0] + ".lights.json"
+        with open(lightsPath, "w") as f:
+            json.dump(lights_sidecar(allLights), f, indent=2)
+        print("Wrote %d ceiling light(s) to %s" % (len(allLights), lightsPath))
 
     print("Wrote %d building(s) to %s" % (args.count, args.output))
 

@@ -49,6 +49,22 @@ class Partition(pro.op_partition.Partition):
             min_pier=self.min_pier,
         )
         context.facesForRemoval.append(shape.face)
+        if self.lights and self.height:
+            from pro.lights import place_ceiling_lights
+            plot = getattr(context, "cityBlock", None) or {}
+            placed = place_ceiling_lights(
+                result["rooms"],
+                z_floor=z,
+                height=self.height,
+                seed=self.seed,
+                drop=self.light_drop,
+                plot_id=plot.get("id") if isinstance(plot, dict) else None,
+            )
+            lights = getattr(context, "ceilingLights", None)
+            if lights is None:
+                context.ceilingLights = placed
+            else:
+                lights.extend(placed)
         jobs = [(item, self.wall, True) for item in result["walls"]]
         jobs += [(item, self.room, False) for item in result["rooms"]]
         for item, rule, is_wall in jobs:

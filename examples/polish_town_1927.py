@@ -125,10 +125,22 @@ LADDER_W = 0.65  # trapdoor hatch against the same side wall
 LADDER_D = 0.95
 LADDER_TREAD = 0.10
 LADDER_RISER = 0.28
+WALL_MARGIN = 0.18  # exterior wall thickness; matches partition margin
+DOOR_H = 2.25
 SLAB_ELEVATIONS = [0.0]
 for _i in range(1, storeys):
     SLAB_ELEVATIONS.append(PLINTH_H + GROUND_H + (_i - 1) * UPPER_H)
 SLAB_ELEVATIONS.append(PLINTH_H + GROUND_H + max(0, storeys - 1) * UPPER_H)
+
+
+def _street_door_params():
+    if frontage == "shop":
+        return 1.15, 0.4
+    if frontage == "civic":
+        return 1.3, 0.6
+    if frontage == "blank":
+        return 1.1, 0.5
+    return 1.15, 0.5
 
 
 @rule
@@ -137,14 +149,59 @@ def Begin():
     copy(FloorSlabs())
     if HAS_BASEMENT:
         copy(Basement())
-    extrude(
-        WALL_H,
-        front >> StreetFacade(),
-        side >> SideFacade(),
-        back >> BackFacade(),
-        top >> PitchedRoof(),
-        inheritMaterialSide=True,
-    )
+    # Church/synagogue stay sealed landmarks. Everything else is a hollow
+    # wall ring so a capsule can walk in from the street door.
+    if role in ("church", "synagogue"):
+        extrude(
+            WALL_H,
+            front >> StreetFacade(),
+            side >> SideFacade(),
+            back >> BackFacade(),
+            top >> PitchedRoof(),
+            inheritMaterialSide=True,
+        )
+    else:
+        copy(PlaceRoof())
+        inset(
+            WALL_MARGIN >> FrontWall(),
+            WALL_MARGIN >> SideWall(),
+            WALL_MARGIN >> BackWall(),
+            WALL_MARGIN >> SideWall(),
+            cap >> delete(),
+        )
+
+
+@rule
+def PlaceRoof():
+    translate(0, 0, WALL_H)
+    PitchedRoof()
+
+
+@rule
+def FrontWall():
+    # Margin strip along street edge 0→1. openings() punches a real door
+    # hole and records a Door_* leaf for game export.
+    color(FACADE_COLOR)
+    door_w, door_off = _street_door_params()
+    shape = context.getState().shape
+    from pro.openings import Opening
+    shape.door_kind = "street"
+    shape.openings = [
+        Opening(offset=door_off, width=door_w, height=DOOR_H, sill_height=0.0)
+    ]
+    openings(WALL_H)
+
+
+@rule
+def SideWall():
+    color(FACADE_COLOR)
+    extrude(WALL_H, front >> SideFacade(), inheritMaterialSide=True)
+
+
+@rule
+def BackWall():
+    color(FACADE_COLOR)
+    extrude(WALL_H, front >> BackFacade(), inheritMaterialSide=True)
 
 
 @rule
@@ -262,6 +319,8 @@ def RoomsOnly(clear_h):
         seed=int(_plot.get("id", 0)),
         door_width=0.9,
         door_height=2.1,
+        lights=True,
+        height=clear_h,
     )
 
 

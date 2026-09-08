@@ -49,6 +49,11 @@ def parse_args(argv=None):
     parser.add_argument("--skip-roads", action="store_true")
     parser.add_argument("--skip-ground", action="store_true")
     parser.add_argument("--max-blocks", type=int, default=None, help="Cap the number of blocks built (for quick previews)")
+    parser.add_argument(
+        "--game-export", action="store_true",
+        help="Also write city_game.json + apply road modifiers and prefer FBX-ready meshes "
+             "for Unreal (doors, lights, player_start sidecars)",
+    )
     return parser.parse_args(argv)
 
 
@@ -469,6 +474,61 @@ def build_plots(layout, ruleFile, maxPlots=None):
     return built, failed
 
 
+def _apply_modifiers_for_export():
+    """Bake Geometry Nodes / modifiers so FBX gets real meshes (roads)."""
+    import bpy
+    for obj in list(bpy.data.objects):
+        if not obj.modifiers:
+            continue
+        bpy.ops.object.select_all(action="DESELECT")
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        try:
+            bpy.ops.object.convert(target="MESH")
+        except Exception:
+            for mod in list(obj.modifiers):
+                try:
+                    bpy.ops.object.modifier_apply(modifier=mod.name)
+                except Exception:
+                    pass
+    bpy.ops.object.select_all(action="DESELECT")
+
+
+def _player_start(layout):
+    import math
+    plaza = next((b for b in layout.get("blocks", []) if b.get("role") == "plaza"), None)
+    if plaza and plaza.get("centroid"):
+        cx, cy = float(plaza["centroid"][0]), float(plaza["centroid"][1])
+    else:
+        cx = cy = 0.0
+    target = None
+    best = 1e18
+    for p in layout.get("plots") or []:
+        if p.get("role") not in ("kamienica", "ratusz", "villa") and p.get("frontage") not in ("shop", "civic"):
+            continue
+        pc = p.get("centroid") or [0, 0]
+        d = (pc[0] - cx) ** 2 + (pc[1] - cy) ** 2
+        if d < best:
+            best = d
+            target = p
+    yaw = 0.0
+    if target and target.get("centroid"):
+        yaw = math.atan2(target["centroid"][1] - cy, target["centroid"][0] - cx)
+    return [round(cx, 4), round(cy, 4), 0.15, round(yaw, 6)]
+
+
+def _buildings_meta(layout):
+    out = []
+    for p in layout.get("plots") or []:
+        out.append({
+            "name": "%s_%03d" % ((p.get("role") or "House").title(), p.get("id", 0)),
+            "plot_id": p.get("id"),
+            "storeys": p.get("storeys"),
+            "role": p.get("role"),
+        })
+    return out
+
+
 def _export(outputPath):
     import bpy
     ext = os.path.splitext(outputPath)[1].lower()
@@ -493,6 +553,9 @@ def main():
         layout = json.load(f)
 
     import bpy
+    from pro import context as proContext
+    proContext.allCeilingLights = []
+    proContext.allGameDoors = []
     _clear_scene()
 
     ruleFile = os.path.abspath(args.rule)
@@ -526,7 +589,44 @@ def main():
         setup_scene(radius)
         print("Added ground, sun, and camera")
 
+    if args.game_export:
+        _apply_modifiers_for_export()
+        print("Applied modifiers for game export")
+
     _export(args.output)
+
+    base = os.path.splitext(os.path.abspath(args.output))[0]
+    cityLights = getattr(proContext, "allCeilingLights", None) or []
+    lightsPath = None
+    if cityLights:
+        from pro.lights import lights_sidecar
+        lightsPath = base + ".lights.json"
+        with open(lightsPath, "w") as f:
+            json.dump(lights_sidecar(cityLights), f, indent=2)
+        print("Wrote %d ceiling light(s) to %s" % (len(cityLights), lightsPath))
+
+    if args.game_export:
+        from pro.doors import game_sidecar
+        doors = getattr(proContext, "allGameDoors", None) or []
+        gamePath = base + ".game.json"
+        with open(gamePath, "w") as f:
+            json.dump(
+                game_sidecar(
+                    doors,
+                    _buildings_meta(layout),
+                    _player_start(layout),
+                    lights_ref=os.path.basename(lightsPath) if lightsPath else None,
+                ),
+                f,
+                indent=2,
+            )
+        print("Wrote %d door(s) + player_start to %s" % (len(doors), gamePath))
+        # Always emit an FBX next to the chosen output for Unreal Interchange
+        if not args.output.lower().endswith(".fbx"):
+            fbxPath = base + ".fbx"
+            _export(fbxPath)
+            print("Wrote Unreal mesh FBX to %s" % fbxPath)
+
     print("Wrote city to %s" % args.output)
 
 

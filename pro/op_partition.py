@@ -29,6 +29,10 @@ def partition(*parts, **kwargs):
         door_height (float): clear opening height. Default 2.1.
         door_sill (float): sill height. Default 0 (doors on the floor plate).
         min_pier (float): minimum solid wall on each side of a door. Default 0.25.
+        lights (bool): if True, hang point lights from a random subset of
+            rooms on this floor. Needs `height` (clear storey height).
+        height (float|None): clear height of this storey, used with lights.
+        light_drop (float): how far below the ceiling slab the lamp hangs.
     """
     return context.factory["Partition"](*parts, **kwargs)
 
@@ -55,6 +59,10 @@ class Partition(ComplexOperator):
         self.door_height = float(kwargs.get("door_height", 2.1))
         self.door_sill = float(kwargs.get("door_sill", 0.0))
         self.min_pier = float(kwargs.get("min_pier", 0.25))
+        self.lights = bool(kwargs.get("lights", False))
+        height = kwargs.get("height", None)
+        self.height = None if height is None else float(height)
+        self.light_drop = float(kwargs.get("light_drop", 0.22))
         self.wall = None
         self.room = None
 

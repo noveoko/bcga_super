@@ -67,4 +67,29 @@ class Openings(pro.op_openings.Openings):
                 band.face.material_index = mat
                 _extrude(band, sill)
 
+        # Game-export door leaves: one record per gap
+        from pro.doors import door_record
+        from pro.rooms import _centroid, _sub, _norm
+        plot = getattr(context, "cityBlock", None) or {}
+        plot_id = plot.get("id") if isinstance(plot, dict) else None
+        kind = getattr(shape, "door_kind", None) or "interior"
+        inward = None
+        if isinstance(plot, dict) and plot.get("centroid"):
+            pc = plot["centroid"]
+            wc = _centroid(poly)
+            inward = _norm(_sub((pc[0], pc[1]), wc))
+        doors = getattr(context, "gameDoors", None)
+        if doors is None:
+            context.gameDoors = []
+            doors = context.gameDoors
+        for span in spans:
+            if span["kind"] != "gap":
+                continue
+            doors.append(
+                door_record(
+                    poly, z0, span["opening"],
+                    kind=kind, plot_id=plot_id, inward=inward,
+                )
+            )
+
         context.facesForRemoval.append(shape.face)

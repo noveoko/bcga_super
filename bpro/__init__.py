@@ -103,6 +103,12 @@ def apply(ruleFile, startRule="Begin", trace=False):
     mesh.uv_layers.new(name=Texture.defaultLayer)
     # initialize the context
     context.init()
+    context.ceilingLights = []
+    context.gameDoors = []
+    if getattr(context, "allCeilingLights", None) is None:
+        context.allCeilingLights = []
+    if getattr(context, "allGameDoors", None) is None:
+        context.allGameDoors = []
     # initializing bmesh instance
     bm = bmesh.new()
     bm.from_mesh(mesh)
@@ -157,6 +163,16 @@ def apply(ruleFile, startRule="Begin", trace=False):
 
     # write everything back to the mesh
     bm.to_mesh(mesh)
+    records = getattr(context, "ceilingLights", None) or []
+    if records:
+        from .lights import spawn_ceiling_lights
+        spawn_ceiling_lights(records, parent=blenderContext.object)
+        context.allCeilingLights.extend(records)
+    doorRecords = getattr(context, "gameDoors", None) or []
+    if doorRecords:
+        from .doors import spawn_door_leaves
+        spawned = spawn_door_leaves(doorRecords, parent=blenderContext.object)
+        context.allGameDoors.extend(spawned)
     # cleaning context from blender specific members
     context.removeAttributes()
 

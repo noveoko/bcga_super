@@ -13,18 +13,17 @@ class Rectangle(pro.op_rectangle.Rectangle):
         origin = shape.center()
         xVec = self.xSize/2 * xAxis
         yVec = self.ySize/2 * yAxis
+        matrix = rotation_zNormal_xHorizontal(shape.firstLoop, shape.getNormal(), True)
 
         if self.replace:
             context.popState()
             shape.delete()
-        
-        # rotation matrix
-        matrix = rotation_zNormal_xHorizontal(shape.firstLoop, shape.getNormal())
+
         shape = createRectangle((
-            bm.verts.new( (-xVec - yVec)*matrix + origin),
-            bm.verts.new( ( xVec - yVec)*matrix + origin),
-            bm.verts.new( ( xVec + yVec)*matrix + origin),
-            bm.verts.new( (-xVec + yVec)*matrix + origin)
+            bm.verts.new(matrix @ (-xVec - yVec) + origin),
+            bm.verts.new(matrix @ (xVec - yVec) + origin),
+            bm.verts.new(matrix @ (xVec + yVec) + origin),
+            bm.verts.new(matrix @ (-xVec + yVec) + origin),
         ))
         if self.operator:
             context.pushState(shape=shape)
