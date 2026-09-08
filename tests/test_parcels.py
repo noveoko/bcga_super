@@ -64,6 +64,40 @@ def test_street_edge_is_first_and_ccw():
     assert on_boundary == len(plots)
 
 
+def test_edge_setbacks_pull_plots_off_the_boundary():
+    """
+    A road drawn later as a ribbon centered on the block edge would bury
+    the front of any plot placed flush with that edge (see
+    layout.py's _block_edge_setbacks). edge_setbacks exists to prevent
+    that: with a setback on an edge, every plot fronting that edge must
+    end up at least that far inside the block boundary.
+    """
+    block = _square(50)
+    setback = 4.0
+    edge_setbacks = [setback, 0.0, 0.0, 0.0]  # only the south edge (index 0) gets one
+    rng = __import__("random").Random(1)
+    plots = parcel_block(block, density=0.7, rng=rng, edge_setbacks=edge_setbacks)
+    assert plots
+    south_y = block[0][1]  # -25.0
+    south_plots = [p for p in plots if abs(p["polygon"][0][1] - p["polygon"][1][1]) < 1e-6
+                   and abs(p["polygon"][0][1] - south_y) > 1.0]
+    assert south_plots, "expected at least one plot fronting the setback edge"
+    for p in south_plots:
+        front_y = p["polygon"][0][1]
+        assert front_y >= south_y + setback - 1e-6
+
+
+def test_edge_setbacks_default_matches_original_behavior():
+    """edge_setbacks=None (the default) must reproduce pre-setback placement exactly."""
+    block = _square(50)
+    plain = parcel_block(block, density=0.7, rng=__import__("random").Random(7))
+    explicit_zero = parcel_block(
+        block, density=0.7, rng=__import__("random").Random(7),
+        edge_setbacks=[0.0, 0.0, 0.0, 0.0],
+    )
+    assert [p["polygon"] for p in plain] == [p["polygon"] for p in explicit_zero]
+
+
 def _dist_point_to_segment(p, a, b):
     vx, vy = b[0] - a[0], b[1] - a[1]
     L2 = vx * vx + vy * vy

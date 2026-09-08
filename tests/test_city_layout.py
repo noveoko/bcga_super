@@ -11,7 +11,12 @@ import pytest
 pytest.importorskip("numpy")
 pytest.importorskip("scipy")
 
-from pro.city.layout import generate_city_layout
+from pro.city.layout import (
+    generate_city_layout,
+    generate_polish_town_layout,
+    ROAD_WIDTHS,
+    DEFAULT_ROAD_WIDTH,
+)
 
 
 def _segments_intersect(p1, p2, p3, p4):
@@ -94,6 +99,39 @@ def test_roads_have_hierarchy_and_are_within_boundary():
     for r in layout["roads"]:
         for pt in (r["start"], r["end"]):
             assert math.hypot(*pt) <= 150 + 1.0
+
+
+def _dist_point_to_segment(p, a, b):
+    vx, vy = b[0] - a[0], b[1] - a[1]
+    L2 = vx * vx + vy * vy
+    if L2 < 1e-12:
+        return math.hypot(p[0] - a[0], p[1] - a[1])
+    t = max(0.0, min(1.0, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L2))
+    return math.hypot(p[0] - (a[0] + t * vx), p[1] - (a[1] + t * vy))
+
+
+@pytest.mark.parametrize("seed", [1927, 1, 42])
+def test_polish_town_houses_never_overlap_a_road(seed):
+    """
+    city_builder.py draws each road as a ribbon of real width, centered on
+    the same line the block/plot geometry treats as the road (see
+    layout.py's _block_edge_setbacks docstring). No plot's street-facing
+    wall should sit closer to a road's centerline than that road's own
+    half-width -- otherwise the road ribbon would be drawn straight
+    through the front of the house.
+    """
+    layout = generate_polish_town_layout(seed=seed)
+    roads = layout["roads"]
+    for plot in layout["plots"]:
+        a, b = plot["polygon"][0], plot["polygon"][1]
+        mid = ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
+        for r in roads:
+            ra, rb = r["start"], r["end"]
+            width = ROAD_WIDTHS.get(r["hierarchy"], DEFAULT_ROAD_WIDTH)
+            clearance = _dist_point_to_segment(mid, ra, rb)
+            assert clearance >= width / 2.0 - 0.05, (
+                plot.get("id"), r["hierarchy"], clearance, width / 2.0
+            )
 
 
 def test_too_few_blocks_raises_clear_error():

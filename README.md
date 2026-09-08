@@ -93,7 +93,8 @@ On top of upstream BCGA (`extrude`, `split`, `decompose`, `hip_roof`, `color`, â
 | `choice("a", "b", weights=[0.7, 0.3])` | One discrete value per building |
 | `chance((0.6, RuleA()), (0.4, RuleB()))` | Pick one rule |
 | `switch(value, {"x": RuleX()}, default=RuleY())` | Branch |
-| `gable_roof(pitch)` | Gable on a **4-edge** rectangle |
+| `gable_roof(pitch[, overhang], face>>.., soffit>>.., fascia>>.., fasciaSize=..)` | Gable on a **4-edge** rectangle. `overhang` (m) pushes the roof edge out past the wall before the pitch starts, instead of cutting off flush at the wall face -- realistic for pre-1930s eaves; `soffit`/`fascia` are optional rules for the underside/barge-board faces |
+| `hip_roof(pitch[, overhang], ..., face>>.., soffit>>.., fascia>>.., fasciaSize=..)` | Hip roof; same overhang mechanics as `gable_roof`. Per-edge pitches/overhangs supported (`hip_roof(p1,o1, p2,o2, p3,o3, p4,o4, ...)`) |
 | `param(value, group="Facade", unit="m")` | Sidebar grouping |
 
 `generate.py` / `city_builder.py` set `context.cityBlock` before each apply. Standalone rules should fall back when it is `None`.

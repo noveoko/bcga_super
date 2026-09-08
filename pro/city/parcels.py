@@ -132,6 +132,7 @@ def parcel_block(
     min_edge=8.0,
     corner_margin=0.6,
     zone=None,
+    edge_setbacks=None,
 ):
     """
     Place rectangular plots along every long edge of a convex block.
@@ -148,6 +149,24 @@ def parcel_block(
         which the old density-only formula couldn't express. When zone is
         None (the default), behavior is unchanged from before: dimensions
         are interpolated from density alone.
+
+    edge_setbacks: optional list, one entry per polygon edge (same
+        indexing as `polygon`: entry i is the edge from polygon[i] to
+        polygon[(i+1) % n]), giving how far in meters to pull that edge's
+        row of plots back from the block boundary before laying out
+        frontage. This exists because a block's boundary edge is also the
+        *road centerline* it borders (see layout.py: roads are the shared
+        edges between neighboring Voronoi cells) -- roads are drawn later
+        as ribbons with real width (city_builder.py's build_roads), so
+        without a setback a plot's street-facing wall would sit on the
+        road centerline and the road ribbon would bury the front half of
+        every house along it. Pass half the road's width (plus a small
+        sidewalk/verge margin) here; see layout.py's
+        `_block_edge_setbacks` for the helper that computes this from a
+        block's polygon and the layout's road list. Edges that don't
+        border a road (e.g. the outer city boundary) should get 0. When
+        edge_setbacks is None (the default), behavior is unchanged from
+        before: plots are placed flush with the block edge.
     """
     if rng is None:
         rng = randomlib.Random()
@@ -185,6 +204,18 @@ def parcel_block(
         mid = ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
         if _dot(inward, _sub(center, mid)) < 0:
             inward = (-inward[0], -inward[1])
+
+        # Pull this edge's frontage line back off the block boundary (=
+        # road centerline) by the road's half-width + verge, so the
+        # house wall lands at the road's actual paved edge instead of
+        # straddling its centerline. a/b are only translated inward --
+        # edge_len and direction are unaffected -- so every offset below
+        # (t, frontage, corner_margin) still measures distance along the
+        # same street frontage.
+        setback = edge_setbacks[i] if edge_setbacks else 0.0
+        if setback:
+            a = _add(a, _mul(inward, setback))
+            b = _add(b, _mul(inward, setback))
 
         t = corner_margin
         limit = edge_len - corner_margin

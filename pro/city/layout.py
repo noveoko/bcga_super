@@ -32,6 +32,27 @@ except ImportError:  # python pro/city/layout.py (script, not package)
     from terrain import load_terrain
 
 
+# Real-world paved width (meters) per road hierarchy value, mirroring the
+# defaults city_builder.py's build_roads() draws ribbons at
+# (--road-width-primary/secondary/local). Kept here too so plot
+# generation can set houses back from the actual road edge instead of the
+# zero-width centerline the road/block geometry is built on -- see
+# _block_edge_setbacks. "arterial"/"collector" are the functional-
+# classification names for the same two tiers as "primary"/"secondary"
+# (see _classify_roads_functional).
+ROAD_WIDTHS = {
+    "primary": 8.0, "arterial": 8.0,
+    "secondary": 4.5, "collector": 4.5,
+    "local": 3.0,
+}
+DEFAULT_ROAD_WIDTH = 4.5
+# Extra buffer beyond half the road width -- a sidewalk/verge strip so
+# house walls don't rise straight off the curb, and so slightly noisy
+# edge-matching (see _road_hierarchy_for_edge) always errs toward a
+# little too much setback rather than a sliver of overlap.
+DEFAULT_SIDEWALK_GAP = 1.0
+
+
 def _sample_seed_points(numPoints, radius, centerBias, rng):
     """
     Samples numPoints points inside a disk of the given radius, biased
@@ -389,6 +410,80 @@ def _dist_point_to_segment(p, a, b):
         return math.hypot(p[0] - a[0], p[1] - a[1])
     t = max(0.0, min(1.0, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L2))
     return math.hypot(p[0] - (a[0] + t * vx), p[1] - (a[1] + t * vy))
+
+
+def _segment_runs_along(a, b, ra, rb, tol=0.15):
+    """
+    True if segment a-b is (near-)collinear with segment ra-rb *and* their
+    projections onto that shared line overlap -- i.e. a-b runs along at
+    least part of ra-rb. Deliberately looser than "a-b is fully contained
+    in ra-rb": a block edge produced by clipping against the rynek square
+    (see _clip_block_from_rynek) can extend past the matching ring-road
+    entry's own endpoints while still genuinely fronting that road for
+    part of its length, and a block edge can equally be a sub-segment of
+    a longer road entry it doesn't reach the ends of. Either case should
+    still get a setback.
+    """
+    dx, dy = rb[0] - ra[0], rb[1] - ra[1]
+    length = math.hypot(dx, dy)
+    if length < 1e-9:
+        return False
+    ux, uy = dx / length, dy / length
+
+    def perp(p):
+        return abs((p[0] - ra[0]) * uy - (p[1] - ra[1]) * ux)
+
+    def proj(p):
+        return (p[0] - ra[0]) * ux + (p[1] - ra[1]) * uy
+
+    if perp(a) > tol or perp(b) > tol:
+        return False
+    lo, hi = sorted((proj(a), proj(b)))
+    return hi >= -tol and lo <= length + tol
+
+
+def _road_hierarchy_for_edge(a, b, roads, tol=0.15):
+    """
+    Finds the road (if any) that block edge a-b fronts, and returns its
+    hierarchy string, or None if this edge doesn't border a road at all
+    (e.g. it sits on the outer city boundary). When an edge runs along
+    more than one matching road entry (can happen right at the rynek
+    corners), the widest one wins, so the setback stays conservative
+    rather than risking an under-setback sliver of overlap.
+    """
+    best = None
+    for r in roads:
+        ra, rb = tuple(r["start"]), tuple(r["end"])
+        if not _segment_runs_along(a, b, ra, rb, tol):
+            continue
+        width = ROAD_WIDTHS.get(r["hierarchy"], DEFAULT_ROAD_WIDTH)
+        if best is None or width > ROAD_WIDTHS.get(best, DEFAULT_ROAD_WIDTH):
+            best = r["hierarchy"]
+    return best
+
+
+def _block_edge_setbacks(polygon, roads, road_widths=None, sidewalk_gap=DEFAULT_SIDEWALK_GAP):
+    """
+    Per-edge inward setback (in meters) for parcel_block's edge_setbacks,
+    one entry per polygon edge: half that edge's bordering road's paved
+    width, plus a sidewalk/verge gap -- 0.0 for edges that don't border a
+    road. This is what keeps a plot's street-facing wall at the road's
+    actual edge instead of on its centerline (see parcel_block's
+    edge_setbacks docstring for why the centerline-flush default would
+    otherwise put houses under the road ribbon city_builder.py draws).
+    """
+    widths = road_widths or ROAD_WIDTHS
+    setbacks = []
+    n = len(polygon)
+    for i in range(n):
+        a, b = polygon[i], polygon[(i + 1) % n]
+        hierarchy = _road_hierarchy_for_edge(a, b, roads)
+        if hierarchy is None:
+            setbacks.append(0.0)
+        else:
+            width = widths.get(hierarchy, DEFAULT_ROAD_WIDTH)
+            setbacks.append(width / 2.0 + sidewalk_gap)
+    return setbacks
 
 
 def _dedupe_road_segments(roads):
@@ -768,7 +863,14 @@ def _block_zone_hint(block, xmin, ymin, xmax, ymax, radius_guess):
     return "residential_edge"
 
 
-def generate_polish_town_layout(numBlocks=48, radius=160.0, seed=1927, use_zoning=False, **kwargs):
+def generate_polish_town_layout(
+    numBlocks=48, radius=160.0, seed=1927, use_zoning=False,
+    road_width_primary=ROAD_WIDTHS["primary"],
+    road_width_secondary=ROAD_WIDTHS["secondary"],
+    road_width_local=ROAD_WIDTHS["local"],
+    sidewalk_gap=DEFAULT_SIDEWALK_GAP,
+    **kwargs
+):
     """
     Magdeburg-plan miasteczko: rectangular rynek, Voronoi streets around it,
     human-scale rectangular plots along every street edge.
@@ -780,6 +882,18 @@ def generate_polish_town_layout(numBlocks=48, radius=160.0, seed=1927, use_zonin
         lots regardless of density, and outer blocks get spacious
         villa/barn-scale lots. Default False preserves the original
         density-only parceling exactly.
+
+    road_width_primary/secondary/local: paved road widths in meters, used
+        to set plots back from the road centerline (see
+        _block_edge_setbacks) so houses align flush with the road's real
+        edge instead of overlapping it. These should match whatever
+        widths city_builder.py's build_roads() is actually going to draw
+        (its --road-width-primary/secondary/local flags) -- pass the same
+        values to both if you're overriding the defaults, or the two
+        stages will disagree about where the curb is.
+    sidewalk_gap: extra buffer (meters) beyond half the road width, e.g.
+        for a sidewalk or grass verge between the road edge and the front
+        wall of a house.
     """
     try:
         from .parcels import parcel_block
@@ -839,6 +953,11 @@ def generate_polish_town_layout(numBlocks=48, radius=160.0, seed=1927, use_zonin
             "hierarchy": "primary",
         })
 
+    road_widths = {
+        "primary": road_width_primary, "arterial": road_width_primary,
+        "secondary": road_width_secondary, "collector": road_width_secondary,
+        "local": road_width_local,
+    }
     radius_guess_for_zoning = max((b["distance_from_center"] for b in kept), default=1.0) or 1.0
     plots = []
     for block in kept:
@@ -846,11 +965,15 @@ def generate_polish_town_layout(numBlocks=48, radius=160.0, seed=1927, use_zonin
             _block_zone_hint(block, xmin, ymin, xmax, ymax, radius_guess_for_zoning)
             if use_zoning else None
         )
+        edge_setbacks = _block_edge_setbacks(
+            block["polygon"], layout["roads"], road_widths=road_widths, sidewalk_gap=sidewalk_gap
+        )
         for plot in parcel_block(
             [tuple(p) for p in block["polygon"]],
             density=block["density"],
             rng=rng,
             zone=zone,
+            edge_setbacks=edge_setbacks,
         ):
             plot["block_id"] = block["id"]
             plot["density"] = block["density"]
@@ -893,6 +1016,16 @@ if __name__ == "__main__":
     parser.add_argument("--target-block-length", type=float, default=140.0)
     parser.add_argument("--use-zoning", action="store_true",
                         help="polish style only: dimension plots from zoning rules instead of density alone")
+    parser.add_argument("--road-width-primary", type=float, default=ROAD_WIDTHS["primary"],
+                        help="polish style only: must match city_builder.py's --road-width-primary "
+                             "so houses are set back to the road's actual drawn edge")
+    parser.add_argument("--road-width-secondary", type=float, default=ROAD_WIDTHS["secondary"],
+                        help="polish style only: must match city_builder.py's --road-width-secondary")
+    parser.add_argument("--road-width-local", type=float, default=ROAD_WIDTHS["local"],
+                        help="polish style only: must match city_builder.py's --road-width-local")
+    parser.add_argument("--sidewalk-gap", type=float, default=DEFAULT_SIDEWALK_GAP,
+                        help="polish style only: extra buffer beyond half the road width between "
+                             "the road edge and the front wall of a house")
     args = parser.parse_args()
 
     if args.style == "polish":
@@ -903,6 +1036,10 @@ if __name__ == "__main__":
             max_slope=args.max_slope, road_classification=args.road_classification,
             block_method=args.block_method, target_block_length=args.target_block_length,
             use_zoning=args.use_zoning,
+            road_width_primary=args.road_width_primary,
+            road_width_secondary=args.road_width_secondary,
+            road_width_local=args.road_width_local,
+            sidewalk_gap=args.sidewalk_gap,
         )
     else:
         layout = generate_city_layout(

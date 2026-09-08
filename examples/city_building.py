@@ -72,7 +72,11 @@ def PitchedRoof():
     # vertices from Voronoi clipping, etc. can trip it up). Since the
     # walls have already been built successfully by this point, fall back
     # to a flat top on failure rather than losing the whole building.
+    #
+    # The second positional value (0.35m here) is the eave overhang: it
+    # pushes the roof edge out past the wall face before the pitch starts,
+    # instead of the roof cutting off flush with the wall.
     try:
-        hip_roof(30 + pyrandom.uniform(-5, 5))
+        hip_roof(30 + pyrandom.uniform(-5, 5), 0.35)
     except Exception:
         pass
