@@ -777,6 +777,15 @@ def _stamp_plot_type(plot, role, rng):
         plot.update(roof="hip", wall="plaster", frontage="house", storeys=2)
     elif role == "workshop":
         plot.update(roof="gable", wall="brick", frontage="shop", storeys=1)
+    elif role == "karczma":
+        # Inn / tavern on or near the rynek: timber-heavy, shopfront, 2 floors
+        plot.update(roof="hip", wall="wood", frontage="shop", storeys=2)
+    elif role == "apteka":
+        # Pharmacy: plaster shopfront with a green cross vibe, 2 floors
+        plot.update(roof="hip", wall="plaster", frontage="shop", storeys=2)
+    elif role == "school":
+        # Village school: civic door, brick, a bit taller massing
+        plot.update(roof="hip", wall="brick", frontage="civic", storeys=2)
     else:
         # kamienica
         plot.update(
@@ -789,11 +798,27 @@ def _stamp_plot_type(plot, role, rng):
 
 def _assign_plot_types(plots, rynek, rng):
     xmin, ymin, xmax, ymax = rynek
+    # Prefer plots whose street edge truly kisses the rynek; fall back to a
+    # looser touch test, then to the largest plots nearest the square, so a
+    # seed with skinny curb lots still gets its civic landmarks.
     on_square = [p for p in plots if _touches_rynek(p, xmin, ymin, xmax, ymax)]
+    if len(on_square) < 3:
+        loose = [p for p in plots if _touches_rynek(p, xmin, ymin, xmax, ymax, tol=6.0)]
+        for p in loose:
+            if p not in on_square:
+                on_square.append(p)
+    if len(on_square) < 3:
+        cx, cy = (xmin + xmax) / 2.0, (ymin + ymax) / 2.0
+        near = sorted(plots, key=lambda p: math.hypot(p["centroid"][0] - cx, p["centroid"][1] - cy))
+        for p in near:
+            if p not in on_square:
+                on_square.append(p)
+            if len(on_square) >= 6:
+                break
     on_square.sort(key=lambda p: -(p["width"] * p["depth"]))
     reserved = set()
     for role, plot in zip(("church", "ratusz", "synagogue"), on_square):
-        if plot["width"] >= 8.0:
+        if plot["width"] >= 7.0:
             _stamp_plot_type(plot, role, rng)
             reserved.add(id(plot))
             if role != "church":
@@ -802,6 +827,26 @@ def _assign_plot_types(plots, rynek, rng):
     radius_guess = 1.0
     if plots:
         radius_guess = max(math.hypot(*p["centroid"]) for p in plots) or 1.0
+
+    # Place one of each new specialty building where the footprint fits.
+    specialty_candidates = [p for p in plots if id(p) not in reserved]
+    specialty_candidates.sort(key=lambda p: -(p["width"] * p["depth"]))
+    for role, min_w in (("school", 10.0), ("karczma", 8.0), ("apteka", 7.0)):
+        for plot in specialty_candidates:
+            if id(plot) in reserved:
+                continue
+            if plot["width"] < min_w:
+                continue
+            # School prefers mid-town; inn/pharmacy prefer the square or core.
+            dist = math.hypot(*plot["centroid"])
+            on_sq = _touches_rynek(plot, xmin, ymin, xmax, ymax, tol=6.0)
+            if role == "school" and (on_sq or dist > radius_guess * 0.7):
+                continue
+            if role in ("karczma", "apteka") and not on_sq and dist > radius_guess * 0.5:
+                continue
+            _stamp_plot_type(plot, role, rng)
+            reserved.add(id(plot))
+            break
 
     for plot in plots:
         if id(plot) in reserved:

@@ -42,7 +42,7 @@ Or manually:
 UnrealEditor-Cmd.exe CityFPS.uproject -unattended -ExecutePythonScript="D:\...\ue\import_city.py" -- --fbx ...\city.fbx --game-json ...\city.game.json --lights-json ...\city.lights.json
 ```
 
-5. If the town is mirrored, re-run import with `--flip-y`.
+5. If the town is mirrored, re-run `pipeline/run_city_fps.py` with `--flip-y` added (it now forwards straight through to the Unreal import stage — no need to call `ue/import_city.py` by hand).
 6. PIE. You should walk the rynek, open street doors, enter rooms, see interior lights.
 
 ## Geometry notes
@@ -55,5 +55,5 @@ UnrealEditor-Cmd.exe CityFPS.uproject -unattended -ExecutePythonScript="D:\...\u
 ## What is still manual
 
 - Creating the `.uproject` and `BP_CityDoor`.
-- First-import axis check (`--flip-y` if needed).
-- Church/synagogue remain sealed landmarks (no interior walk).
+- First-import axis check — run once, and add `--flip-y` to the same command if the town looks mirrored.
+- Church/synagogue are walkable like other buildings (street door, interior lights, roof overhang).

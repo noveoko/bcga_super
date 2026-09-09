@@ -46,6 +46,10 @@ def main():
     parser.add_argument("--ue-project", default=None, help="Path to CityFPS.uproject to auto-import")
     parser.add_argument("--unreal-cmd", default=None, help="UnrealEditor-Cmd.exe path")
     parser.add_argument("--blender", default="blender")
+    parser.add_argument("--flip-y", action="store_true",
+                         help="Apply (X,-Y,Z) Blender→UE flip when placing doors/lights/player start "
+                              "(see docs/PLAYABLE_CITY.md step 5 — pass this if the imported town looks mirrored)")
+    parser.add_argument("--scale", type=float, default=100.0, help="meters → centimeters, forwarded to Unreal import")
     args = parser.parse_args()
 
     root = _repo_root()
@@ -99,15 +103,21 @@ def main():
     _log(log_path, "=== Stage 3: Unreal import ===")
     unreal = args.unreal_cmd or os.environ.get("UNREAL_EDITOR_CMD") or "UnrealEditor-Cmd"
     import_script = os.path.join(root, "ue", "import_city.py")
-    _run([
+    import_args = [
         unreal, args.ue_project, "-unattended",
         "-ExecutePythonScript=%s" % import_script,
         "--",
         "--fbx", fbx_path,
         "--game-json", game_json,
         "--lights-json", lights_json,
-    ], log_path)
+        "--scale", str(args.scale),
+    ]
+    if args.flip_y:
+        import_args.append("--flip-y")
+    _run(import_args, log_path)
     _log(log_path, "Unreal import finished. Open the project and PIE.")
+    if not args.flip_y:
+        _log(log_path, "If the town looks mirrored in PIE, re-run this command with --flip-y.")
 
 
 if __name__ == "__main__":

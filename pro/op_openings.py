@@ -1,3 +1,4 @@
+from .rule_context import resolve_rule_context
 from .base import ComplexOperator, context
 
 
@@ -7,7 +8,7 @@ def openings(wall_height, **kwargs):
     current 2-D wall shape (shape.openings). With no openings, this is
     extrude(wall_height).
     """
-    return context.factory["Openings"](wall_height, **kwargs)
+    return resolve_rule_context().factory["Openings"](wall_height, **kwargs)
 
 
 class Openings(ComplexOperator):

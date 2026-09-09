@@ -1,3 +1,4 @@
+from .rule_context import resolve_rule_context
 from .base import ComplexOperator, context, countOperator
 
 front = "front"
@@ -10,7 +11,7 @@ side = "side"
 all = "all"
 
 def decompose(*parts):
-	return context.factory["Decompose"](*parts)
+	return resolve_rule_context().factory["Decompose"](*parts)
 
 class Decompose(ComplexOperator):
 	def __init__(self, *parts):

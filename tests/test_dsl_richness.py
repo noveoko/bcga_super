@@ -21,13 +21,11 @@ class _Recorder:
         self.executed = True
 
 
-class _DummyParent:
-    def addChildOperator(self, o): pass
-    def removeChildOperators(self, n): pass
+from helpers import install_dummy_operator
 
 
 def _with_context():
-    context.operator = _DummyParent()
+    install_dummy_operator()
 
 
 # -- choice() -----------------------------------------------------------

@@ -1,7 +1,8 @@
+from .rule_context import resolve_rule_context
 from .base import ComplexOperator, context, countOperator
 
 def copy(operator=None, **kwargs):
-    return context.factory["Copy"](operator, **kwargs)
+    return resolve_rule_context().factory["Copy"](operator, **kwargs)
 
 class Copy(ComplexOperator):
     def __init__(self, operator, **kwargs):

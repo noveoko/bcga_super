@@ -78,7 +78,13 @@ class Operator:
 		# Every operator can be counted once time in a constructor of the other operators
 		# self.count is set to False in the countOperator helper function
 		self.count = True
-		context.operator.addChildOperator(self)
+		# Register under the current rule parent when inside a rule body.
+		# Outside a rule body (unit tests constructing ops directly) there is
+		# no parent — skip instead of requiring a dummy context.operator.
+		from .rule_context import ambient_operator_parent
+		parent = ambient_operator_parent()
+		if parent is not None:
+			parent.addChildOperator(self)
 	
 	def __rrshift__(self, value):
 		# The operator to be returned.
@@ -100,10 +106,11 @@ class Operator:
 			operator.value = value
 		return operator
 	
-	def execute(self):
+	def execute(self, ctx=None):
+		"""Run this operator. Prefer passing an explicit RuleContext (Phase 3)."""
 		pass
 	
-	def execute_join(self, band):
+	def execute_join(self, band, ctx=None):
 		""" This method should be called for each band of rectangles after join(..) finished its procession"""
 		pass
 	
@@ -144,12 +151,12 @@ class RrshiftOperator:
 		self.modifier = None
 		self.operator = operator
 	
-	def execute(self):
+	def execute(self, ctx=None):
 		operator = self.operator
 		# remember original value for self.operator
 		value = self.value
 		operator.value = self.value
-		self.operator.execute()
+		self.operator.execute(ctx)
 		if self.modifier:
 			delattr(operator, self.modifier)
 		# restore the original value
@@ -160,8 +167,11 @@ class RrshiftOperator:
 
 class ComplexOperator(Operator):
 	def __init__(self, numParts):
-		# remove numParts operators from
-		context.operator.removeChildOperators(numParts) 
+		# remove numParts operators from the current parent when inside a rule
+		from .rule_context import ambient_operator_parent
+		parent = ambient_operator_parent()
+		if parent is not None:
+			parent.removeChildOperators(numParts)
 		super().__init__()
 
 
@@ -183,11 +193,17 @@ class Rule(ComplexOperator):
 		self.operators = []
 		super().__init__(numParts)
 	
-	def execute(self):
-		# setting the current operator to self
-		context.operator = self
-		self.operator(*self.args, **self.kwargs)
-		self.executeChildOperators()
+	def execute(self, ctx=None):
+		from .rule_context import resolve_rule_context, push_rule_context, reset_rule_context
+		ctx = resolve_rule_context(ctx)
+		token = push_rule_context(ctx)
+		try:
+			# setting the current operator to self
+			ctx.operator = self
+			self.operator(*self.args, **self.kwargs)
+			self.executeChildOperators(ctx)
+		finally:
+			reset_rule_context(token)
 
 	def addChildOperator(self, operator):
 		"""Adds child operator"""
@@ -198,12 +214,14 @@ class Rule(ComplexOperator):
 			self.operators.pop()
 			numOperators -= 1
 	
-	def executeChildOperators(self):
+	def executeChildOperators(self, ctx=None):
+		from .rule_context import resolve_rule_context, call_execute
+		ctx = resolve_rule_context(ctx)
 		# execute operators inside the body of the current operator
-		tracing = context.tracing
+		tracing = ctx.tracing
 		trace = [] if tracing else None
 		for o in self.operators:
-			o.execute()
+			call_execute(o, ctx)
 			if tracing:
 				trace.append(o.to_dict())
 		if tracing:
@@ -263,31 +281,185 @@ class State:
 		self.valid = True
 
 
-class Context:
+class RandomContext:
+	"""Deterministic RNG owned by a generation session / Context façade."""
+
+	def __init__(self, seed=None):
+		self.seed = seed
+		self.rng = randomlib.Random(seed)
+
+	def set_seed(self, seed):
+		self.seed = seed
+		self.rng = randomlib.Random(seed)
+
+
+class TraceContext:
+	"""Execution-trace flags and the last resolved buildingTrace dict."""
+
 	def __init__(self):
-		# when True, Rule.executeChildOperators() records a resolved,
-		# JSON-serializable trace of everything that executes (see
-		# Operator.to_dict()/Rule.to_dict()). False by default so
-		# normal generation has zero extra overhead.
 		self.tracing = False
-		# set by city_builder.py before each block is generated
+		self.buildingTrace = None
+
+
+# Shared across all Context instances / GenerationSessions. buildFactory()
+# (bpro) fills this once at import; reset() must never replace it with a
+# fresh dict or DSL operators stop resolving.
+_OPERATOR_FACTORY = {}
+
+
+class Context:
+	"""
+	Per-session execution state composed of typed sub-contexts.
+
+	The module-level `context` object is a ContextProxy that forwards to the
+	active GenerationSession's Context (or to a process default when no
+	session is active). Rule files keep reading context.rng / context.tracing
+	etc. unchanged.
+	"""
+
+	def __init__(self):
+		# set by city_builder.py / GenerationSession before each block
 		self.cityBlock = None
+		self.blenderContext = None
+		self.random = RandomContext()
+		self.trace = TraceContext()
+		from .geometry import GeometryContext
+		from .material_context import MaterialContext
+		self.geometry = GeometryContext()
+		self.materials = MaterialContext()
+		self.allCeilingLights = []
+		self.allGameDoors = []
 		self.reset()
 		
 	def reset(self):
-		# the factory stores references to the basic classes
-		self.factory = {}
+		# Always the shared operator factory — never a per-instance {} 
+		self.factory = _OPERATOR_FACTORY
+
+	# --- attribute aliases (compat with pre-session code) -----------------
+
+	@property
+	def seed(self):
+		return self.random.seed
+
+	@seed.setter
+	def seed(self, value):
+		self.random.seed = value
+
+	@property
+	def rng(self):
+		return self.random.rng
+
+	@rng.setter
+	def rng(self, value):
+		self.random.rng = value
+
+	@property
+	def tracing(self):
+		return self.trace.tracing
+
+	@tracing.setter
+	def tracing(self, value):
+		self.trace.tracing = bool(value)
+
+	@property
+	def buildingTrace(self):
+		return self.trace.buildingTrace
+
+	@buildingTrace.setter
+	def buildingTrace(self, value):
+		self.trace.buildingTrace = value
+
+	# Geometry / material aliases (Phase 4) — operators keep using ctx.bm etc.
+	@property
+	def bm(self):
+		return self.geometry.bm
+
+	@bm.setter
+	def bm(self, value):
+		self.geometry.bm = value
+
+	@property
+	def facesForRemoval(self):
+		return self.geometry.facesForRemoval
+
+	@facesForRemoval.setter
+	def facesForRemoval(self, value):
+		self.geometry.facesForRemoval = value
+
+	@property
+	def vertexRegistry(self):
+		return self.geometry.vertexRegistry
+
+	@vertexRegistry.setter
+	def vertexRegistry(self, value):
+		self.geometry.vertexRegistry = value
+
+	@property
+	def joinManager(self):
+		return self.geometry.joinManager
+
+	@joinManager.setter
+	def joinManager(self, value):
+		self.geometry.joinManager = value
+
+	@property
+	def materialManager(self):
+		return self.materials.manager
+
+	@materialManager.setter
+	def materialManager(self, value):
+		self.materials.manager = value
+
+	def set_seed(self, seed):
+		"""Set the seed for BCGA's private random-number generator.
+
+		Calling this once before a batch keeps successive buildings on the
+		same deterministic random stream instead of restarting every building.
+		"""
+		self.random.set_seed(seed)
 	
 	def __call__(self):
 		self.reset()
 	
+	# Routed through GeometryContext / MaterialContext when set via addAttribute
+	_BACKEND_ATTRS = frozenset({
+		"bm", "facesForRemoval", "vertexRegistry", "joinManager", "materialManager",
+	})
+
 	def addAttribute(self, attr, value):
-		setattr(self, attr, value)
-		self.attrs.append(attr)
+		# Prefer GeometryContext / MaterialContext for known backend slots so
+		# legacy addAttribute("bm", ...) still works during the Phase 4 migrate.
+		if attr == "bm":
+			self.geometry.bm = value
+		elif attr == "facesForRemoval":
+			self.geometry.facesForRemoval = value
+		elif attr == "vertexRegistry":
+			self.geometry.vertexRegistry = value
+		elif attr == "joinManager":
+			# May be a class (legacy) or instance; GeometryContext handles both.
+			if isinstance(value, type):
+				self.geometry._join_manager_factory = value
+				self.geometry.joinManager = None
+			else:
+				self.geometry.joinManager = value
+		elif attr == "materialManager":
+			self.materials.manager = value
+		else:
+			setattr(self, attr, value)
+		if attr not in self.attrs:
+			self.attrs.append(attr)
 	
 	def removeAttributes(self):
-		for attr in self.attrs:
-			delattr(self, attr)
+		attrs = getattr(self, "attrs", None) or []
+		for attr in list(attrs):
+			if attr in self._BACKEND_ATTRS:
+				# Owned/closed by geometry.close() / materials.close()
+				continue
+			if hasattr(self, attr):
+				try:
+					delattr(self, attr)
+				except AttributeError:
+					pass
 		self.attrs = []
 	
 	def getState(self):
@@ -313,6 +485,41 @@ class Context:
 		self.deferreds = []
 		# the list of params
 		self.params = []
+
+	def begin_apply(self):
+		"""Start a single building apply: reset per-apply DSL/geometry slots."""
+		self.init()
+		self.geometry.reset()
+		self.materials.reset()
+		self.ceilingLights = []
+		self.gameDoors = []
+		if getattr(self, "allCeilingLights", None) is None:
+			self.allCeilingLights = []
+		if getattr(self, "allGameDoors", None) is None:
+			self.allGameDoors = []
+		self.operator = None
+		self.trace.buildingTrace = None
+
+	def end_apply(self, exc=None):
+		"""
+		Always-safe cleanup after one apply (success or failure).
+
+		Closes GeometryContext / MaterialContext (Phase 4), clears any leftover
+		addAttribute slots, plus operator stack leftovers.
+		Leaves session-level fields (cityBlock, seed/rng, all* accumulators,
+		factory) intact for the next building in the batch.
+		"""
+		self.geometry.close()
+		self.materials.close()
+		self.removeAttributes()
+		self.operator = None
+		self.stack = []
+		self.deferreds = []
+		self.params = []
+		# per-building light/door lists are consumed by the orchestrator before
+		# end_apply; clear so a failed apply cannot leak into the next one
+		self.ceilingLights = []
+		self.gameDoors = []
 	
 	def prepare(self):
 		"""The method does all necessary preparations for a rule evaluation."""
@@ -325,18 +532,21 @@ class Context:
 		self.deferreds.append((shape, deferredOperator))
 	
 	def executeDeferred(self):
-		self.joinManager = self.joinManager()
+		# Instantiate join manager via GeometryContext (no class-vs-instance swap).
+		jm = self.geometry.create_join_manager()
 		for entry in self.deferreds:
 			# entry[1] is operator
 			# entry[0] is shape
 			entry[1].resolve(entry)
-		self.joinManager.finalize()
+		jm.finalize()
 
 
 def shape():
 	"""Returns the current (top) shape from the stack"""
-	context.operator.executeChildOperators()
-	return context.getState().shape
+	from .rule_context import resolve_rule_context
+	ctx = resolve_rule_context()
+	ctx.operator.executeChildOperators(ctx)
+	return ctx.getState().shape
 
 
 #
@@ -371,6 +581,11 @@ class Choice:
 			raise ValueError("choice() needs at least one option")
 		if weights is not None and len(weights) != len(options):
 			raise ValueError("choice() got %d weights for %d options" % (len(weights), len(options)))
+		if weights is not None:
+			if any(w < 0 for w in weights):
+				raise ValueError("choice() weights must be non-negative")
+			if not any(w > 0 for w in weights):
+				raise ValueError("choice() needs at least one positive weight")
 		self.options = options
 		self.weights = weights
 		self.value = None
@@ -378,9 +593,9 @@ class Choice:
 	def getValue(self):
 		if self.value is None:
 			if self.weights:
-				self.value = randomlib.choices(self.options, weights=self.weights, k=1)[0]
+				self.value = context.rng.choices(self.options, weights=self.weights, k=1)[0]
 			else:
-				self.value = randomlib.choice(self.options)
+				self.value = context.rng.choice(self.options)
 		return self.value
 
 	def __str__(self):
@@ -510,7 +725,7 @@ class Random:
 	
 	def getValue(self):
 		if self.value is None:
-			self.value = randomlib.uniform(self.low, self.high)
+			self.value = context.rng.uniform(self.low, self.high)
 		return self.value
 	
 	def __str__(self):
@@ -560,4 +775,35 @@ def to_json(rule, **kwargs):
 	return json.dumps(data, **kwargs)
 
 
-context = Context()
+_default_context = Context()
+
+
+class ContextProxy:
+	"""
+	Module-level context facade.
+
+	Attribute access forwards to the active GenerationSession's Context when
+	one is active, otherwise to the process default Context. This lets
+	rom pro import context keep working while orchestrators isolate runs
+	via GenerationSession.
+	"""
+
+	def _target(self):
+		# Lazy import avoids a circular load with pro.session.
+		from .session import get_active_session
+		session = get_active_session()
+		if session is not None:
+			return session.context
+		return _default_context
+
+	def __getattr__(self, name):
+		return getattr(self._target(), name)
+
+	def __setattr__(self, name, value):
+		setattr(self._target(), name, value)
+
+	def __delattr__(self, name):
+		delattr(self._target(), name)
+
+
+context = ContextProxy()

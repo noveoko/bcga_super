@@ -1,5 +1,6 @@
 import pro
 from pro import context
+from pro.rule_context import resolve_rule_context
 from pro.rooms import partition_polygon
 
 from .shape import Shape2d, createRectangle, createShape2d
@@ -21,16 +22,18 @@ def _shape_xy(shape):
     return pts, z
 
 
-def _shape_from_poly(poly, z):
-    verts = [context.vertexRegistry.getVertex((p[0], p[1], z)) for p in poly]
+def _shape_from_poly(poly, z, ctx=None):
+    ctx = resolve_rule_context(ctx)
+    verts = [ctx.vertexRegistry.getVertex((p[0], p[1], z)) for p in poly]
     if len(verts) == 4:
         return createRectangle(verts)
     return createShape2d(verts)
 
 
 class Partition(pro.op_partition.Partition):
-    def execute(self):
-        shape = context.getState().shape
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
+        shape = ctx.getState().shape
         if not isinstance(shape, Shape2d):
             return
         poly, z = _shape_xy(shape)
@@ -48,10 +51,10 @@ class Partition(pro.op_partition.Partition):
             door_sill=self.door_sill,
             min_pier=self.min_pier,
         )
-        context.facesForRemoval.append(shape.face)
+        ctx.facesForRemoval.append(shape.face)
         if self.lights and self.height:
             from pro.lights import place_ceiling_lights
-            plot = getattr(context, "cityBlock", None) or {}
+            plot = getattr(ctx, "cityBlock", None) or {}
             placed = place_ceiling_lights(
                 result["rooms"],
                 z_floor=z,
@@ -60,18 +63,18 @@ class Partition(pro.op_partition.Partition):
                 drop=self.light_drop,
                 plot_id=plot.get("id") if isinstance(plot, dict) else None,
             )
-            lights = getattr(context, "ceilingLights", None)
+            lights = getattr(ctx, "ceilingLights", None)
             if lights is None:
-                context.ceilingLights = placed
+                ctx.ceilingLights = placed
             else:
                 lights.extend(placed)
         jobs = [(item, self.wall, True) for item in result["walls"]]
         jobs += [(item, self.room, False) for item in result["rooms"]]
         for item, rule, is_wall in jobs:
-            new_shape = _shape_from_poly(item["polygon"], z)
+            new_shape = _shape_from_poly(item["polygon"], z, ctx)
             if is_wall:
                 new_shape.openings = item.get("openings") or []
             if rule:
-                context.pushState(shape=new_shape)
-                rule.execute()
-                context.popState()
+                ctx.pushState(shape=new_shape)
+                rule.execute(ctx)
+                ctx.popState()

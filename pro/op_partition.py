@@ -1,3 +1,4 @@
+from .rule_context import resolve_rule_context
 from .base import Operator, ComplexOperator, context, countOperator
 from .openings import WallSegment
 
@@ -34,7 +35,7 @@ def partition(*parts, **kwargs):
         height (float|None): clear height of this storey, used with lights.
         light_drop (float): how far below the ceiling slab the lamp hangs.
     """
-    return context.factory["Partition"](*parts, **kwargs)
+    return resolve_rule_context().factory["Partition"](*parts, **kwargs)
 
 
 def segment(start, end, thickness=0.12):

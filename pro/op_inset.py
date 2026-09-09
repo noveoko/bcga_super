@@ -1,7 +1,8 @@
+from .rule_context import resolve_rule_context
 from .base import Operator, ComplexOperator, context
 
 def inset(*args, **kwargs):
-    return context.factory["Inset"](*args, **kwargs)
+    return resolve_rule_context().factory["Inset"](*args, **kwargs)
 
 class Inset(ComplexOperator):
     def __init__(self, *args, **kwargs):

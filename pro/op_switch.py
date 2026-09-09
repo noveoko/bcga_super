@@ -1,4 +1,5 @@
-from .base import Operator, ComplexOperator, context
+from .base import Operator, ComplexOperator
+from .rule_context import resolve_rule_context, call_execute
 
 
 def switch(value, cases, default=None):
@@ -26,7 +27,7 @@ def switch(value, cases, default=None):
             "industrial": IndustrialFacade(),
         }, default=ModernFacade())
     """
-    return context.factory["Switch"](value, cases, default)
+    return resolve_rule_context().factory["Switch"](value, cases, default)
 
 
 class Switch(ComplexOperator):
@@ -42,7 +43,8 @@ class Switch(ComplexOperator):
                 numOperators += 1
         super().__init__(numOperators)
 
-    def execute(self):
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
         chosen = self.cases.get(self.switchValue, self.default)
         if chosen is not None:
-            chosen.execute()
+            call_execute(chosen, ctx)

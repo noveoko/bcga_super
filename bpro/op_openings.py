@@ -1,4 +1,5 @@
 from pro import context
+from pro.rule_context import resolve_rule_context
 from pro.openings import decompose_spans, opening_from, slice_wall_polygon
 
 from .op_partition import _shape_from_poly, _shape_xy
@@ -24,8 +25,9 @@ def _extrude(shape, depth):
 
 
 class Openings(pro.op_openings.Openings):
-    def execute(self):
-        shape = context.getState().shape
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
+        shape = ctx.getState().shape
         if not isinstance(shape, Shape2d):
             return
         raw = getattr(shape, "openings", None) or []
@@ -80,8 +82,8 @@ class Openings(pro.op_openings.Openings):
             inward = _norm(_sub((pc[0], pc[1]), wc))
         doors = getattr(context, "gameDoors", None)
         if doors is None:
-            context.gameDoors = []
-            doors = context.gameDoors
+            ctx.gameDoors = []
+            doors = ctx.gameDoors
         for span in spans:
             if span["kind"] != "gap":
                 continue
@@ -92,4 +94,4 @@ class Openings(pro.op_openings.Openings):
                 )
             )
 
-        context.facesForRemoval.append(shape.face)
+        ctx.facesForRemoval.append(shape.face)

@@ -1,10 +1,13 @@
 import pro
 from pro import context
+from pro.rule_context import resolve_rule_context
 
 class Join(pro.op_join.Join):
-    def execute(self):
-        shape = context.getState().shape
-        context.addDeferred(shape, self)
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
+        shape = ctx.getState().shape
+        ctx.addDeferred(shape, self)
     
     def resolve(self, deferred):
-        context.joinManager.process(deferred)
+        ctx = resolve_rule_context()
+        ctx.joinManager.process(deferred)

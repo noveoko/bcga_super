@@ -1,7 +1,8 @@
+from .rule_context import resolve_rule_context
 from .base import Operator, ComplexOperator, context, countOperator
 
 def join(neighbor, *args, **kwargs):
-    return context.factory["Join"](neighbor, *args, **kwargs)
+    return resolve_rule_context().factory["Join"](neighbor, *args, **kwargs)
 
 class Join(ComplexOperator):
     def __init__(self, neighbor, *args, **kwargs):

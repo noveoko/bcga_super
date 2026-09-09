@@ -5,6 +5,10 @@ Expects a street-aligned rectangular plot in context.cityBlock:
   width, depth, role, roof, wall, frontage, storeys, id
 
 Street edge of the footprint is vertices 0→1, so `front` is the street façade.
+
+Note (Phase 5): this file still binds plot fields at import time because
+massing constants depend on them. New rules should prefer city_block()
+inside Begin() — see examples/city_building.py and docs/CONTEXT.md.
 """
 import random as pyrandom
 
@@ -29,6 +33,10 @@ storeys = int(_plot.get("storeys") or 2)
 
 PLINTH_H = 0.4
 GROUND_H = 3.45 if role != "church" else 4.2
+if role == "school":
+    GROUND_H = 3.7  # taller classroom storey
+elif role == "karczma":
+    GROUND_H = 3.55  # high common-room ceiling
 UPPER_H = 3.15
 CORNICE_H = 0.25
 WALL_H = PLINTH_H + GROUND_H + max(0, storeys - 1) * UPPER_H + CORNICE_H
@@ -45,28 +53,39 @@ if role == "church":
 HAS_BASEMENT = role not in ("barn", "cottage")
 if role == "church":
     BASEMENT_H = 2.6
-elif role in ("ratusz", "synagogue"):
+elif role in ("ratusz", "synagogue", "school"):
     BASEMENT_H = 2.4
+elif role == "karczma":
+    BASEMENT_H = 2.3  # beer / cold storage cellar
 elif role == "workshop":
     BASEMENT_H = 2.0
 else:
     BASEMENT_H = 2.2
 
 # Cellar access: a proper stairwell, or only a hatch-and-ladder.
-# Church/synagogue keep a sealed crypt (no well today). Workshops and
-# single-storey buildings typically had a trapdoor; multi-storey masonry
-# houses more often had cellar stairs, with a minority still just a ladder.
+# Workshops and single-storey buildings typically had a trapdoor; multi-storey
+# masonry houses more often had cellar stairs, with a minority still just a
+# ladder. Civic landmarks (church/synagogue) use stairs down to the crypt.
 # Override per plot with basement_access: "stairs" | "ladder".
-if not HAS_BASEMENT or role in ("church", "synagogue"):
+if not HAS_BASEMENT:
     BASEMENT_ACCESS = None
 elif _plot.get("basement_access") in ("stairs", "ladder"):
     BASEMENT_ACCESS = _plot["basement_access"]
+elif role in ("church", "synagogue", "school", "ratusz"):
+    BASEMENT_ACCESS = "stairs"
 elif role == "workshop" or storeys < 2:
     BASEMENT_ACCESS = "ladder"
 else:
     BASEMENT_ACCESS = "ladder" if pyrandom.random() < 0.22 else "stairs"
 
-if wall == "brick":
+if role == "apteka":
+    # Cream plaster with a hint of pharmacy green in the mix
+    FACADE_COLOR = param(choice("#e8efe4", "#dde8d6", "#f0ebe0", "#d5e2cf"), group="Facade")
+elif role == "karczma":
+    FACADE_COLOR = param(choice("#6e4a30", "#7a5538", "#5c3e28", "#8a6040"), group="Facade")
+elif role == "school":
+    FACADE_COLOR = param(choice("#8c4032", "#9a4a3a", "#a35642"), group="Facade")
+elif wall == "brick":
     FACADE_COLOR = param(choice("#9a4a3a", "#8c4032", "#a35642", "#7a382c"), group="Facade")
 elif wall == "wood":
     FACADE_COLOR = param(choice("#8b6a45", "#7a5a38", "#a07a50", "#6e4e32"), group="Facade")
@@ -89,6 +108,14 @@ elif role == "barn":
     ROOF_PITCH = param(round(pyrandom.uniform(36, 44), 1), group="Roof")
     # barns/outbuildings favored the deepest eaves, to keep rain off stacked hay/wood
     ROOF_OVERHANG = param(round(pyrandom.uniform(0.50, 0.75), 2), group="Roof")
+elif role == "karczma":
+    ROOF_COLOR = param(choice("#5a3a28", "#6b4230", "#4a3020"), group="Roof")
+    ROOF_PITCH = param(round(pyrandom.uniform(38, 46), 1), group="Roof")
+    ROOF_OVERHANG = param(round(pyrandom.uniform(0.45, 0.65), 2), group="Roof")
+elif role == "school":
+    ROOF_COLOR = param(choice("#9c3b28", "#a34430", "#8a3828"), group="Roof")
+    ROOF_PITCH = param(round(pyrandom.uniform(36, 42), 1), group="Roof")
+    ROOF_OVERHANG = param(round(pyrandom.uniform(0.40, 0.55), 2), group="Roof")
 else:
     ROOF_COLOR = param(choice("#b5523a", "#9c3b28", "#c45c3e", "#a34430"), group="Roof")
     ROOF_PITCH = param(round(pyrandom.uniform(34, 44), 1), group="Roof")
@@ -149,26 +176,17 @@ def Begin():
     copy(FloorSlabs())
     if HAS_BASEMENT:
         copy(Basement())
-    # Church/synagogue stay sealed landmarks. Everything else is a hollow
-    # wall ring so a capsule can walk in from the street door.
-    if role in ("church", "synagogue"):
-        extrude(
-            WALL_H,
-            front >> StreetFacade(),
-            side >> SideFacade(),
-            back >> BackFacade(),
-            top >> PitchedRoof(),
-            inheritMaterialSide=True,
-        )
-    else:
-        copy(PlaceRoof())
-        inset(
-            WALL_MARGIN >> FrontWall(),
-            WALL_MARGIN >> SideWall(),
-            WALL_MARGIN >> BackWall(),
-            WALL_MARGIN >> SideWall(),
-            cap >> delete(),
-        )
+    # Every role is a hollow wall ring: street `openings()` punches a real
+    # door (game-export Door_* leaf), interiors get partition doors + ceiling
+    # lights, and PlaceRoof() applies pitch + eave overhang on all of them.
+    copy(PlaceRoof())
+    inset(
+        WALL_MARGIN >> FrontWall(),
+        WALL_MARGIN >> SideWall(),
+        WALL_MARGIN >> BackWall(),
+        WALL_MARGIN >> SideWall(),
+        cap >> delete(),
+    )
 
 
 @rule
@@ -210,9 +228,10 @@ def FloorSlabs():
     # Begin()'s extrude() turns the original into the wall volume, so each
     # slab below reuses that same untouched 2D footprint independently.
     # Occupied storeys also get an interior partition copy sitting on top
-    # of that storey's slab; the last elevation is the attic plate only.
-    _has_stairs = role not in ("church", "synagogue")
-    _well_up = _has_stairs and storeys >= 2
+    # of that storey's slab (interior doors + ceiling lights); the last
+    # elevation is the attic plate only. Stairs connect floors when storeys
+    # >= 2, including civic landmarks.
+    _well_up = storeys >= 2
     _well_down = BASEMENT_ACCESS is not None
     for i, elevation in enumerate(SLAB_ELEVATIONS[:-1]):
         if i == 0 and _well_down:
@@ -222,9 +241,8 @@ def FloorSlabs():
         else:
             opening = None
         copy(SlabAt(elevation, opening=opening))
-        if _has_stairs:
-            clear_h = SLAB_ELEVATIONS[i + 1] - elevation - SLAB_H
-            copy(InteriorAt(elevation + SLAB_H, clear_h))
+        clear_h = SLAB_ELEVATIONS[i + 1] - elevation - SLAB_H
+        copy(InteriorAt(elevation + SLAB_H, clear_h))
     copy(SlabAt(SLAB_ELEVATIONS[-1], opening=("well" if _well_up else None)))
     if _well_down:
         copy(BasementAccess())
@@ -259,8 +277,7 @@ def SlabTop():
 @rule
 def InteriorAt(elevation, clear_h):
     translate(0, 0, elevation)
-    _has_stairs = role not in ("church", "synagogue")
-    _stairs_up = _has_stairs and storeys >= 2
+    _stairs_up = storeys >= 2
     if _stairs_up:
         split(
             x,
@@ -314,8 +331,8 @@ def RoomsOnly(clear_h):
         thickness=0.12,
         margin=0.18,
         min_span=2.0,
-        max_span=3.2 if role in ("cottage", "barn", "villa") else 4.5,
-        corridor=(1.15 if (role in ("kamienica", "ratusz") or frontage == "shop") else None),
+        max_span=3.2 if role in ("cottage", "barn", "villa") else (5.0 if role == "school" else 4.5),
+        corridor=(1.15 if (role in ("kamienica", "ratusz", "school", "karczma", "apteka", "church", "synagogue") or frontage == "shop") else None),
         seed=int(_plot.get("id", 0)),
         door_width=0.9,
         door_height=2.1,

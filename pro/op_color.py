@@ -1,7 +1,8 @@
+from .rule_context import resolve_rule_context
 from .base import Operator, context
 
 def color(_color):
-	return context.factory["Color"](_color)
+	return resolve_rule_context().factory["Color"](_color)
 
 class Color(Operator):
 	def __init__(self, _color):

@@ -1,3 +1,4 @@
+from .rule_context import resolve_rule_context
 from .base import context
 
 def texture(path="", width=0, height=0, **kwargs):
@@ -12,4 +13,4 @@ def texture(path="", width=0, height=0, **kwargs):
     # treat the special case when path is actually a tuple (path, width, height)
     if isinstance(path, (tuple, list)):
         path, width, height = path
-    return context.factory["Texture"](path, width, height, **kwargs)
+    return resolve_rule_context().factory["Texture"](path, width, height, **kwargs)

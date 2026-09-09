@@ -12,10 +12,10 @@ layout computation vs. Blender geometry generation):
     blender --background --factory-startup --python city_builder.py -- \\
         --layout /tmp/city.json --rule examples/city_building.py --output /tmp/city.blend
 
-The rule file can read pro.context.cityBlock (set before each block is
-generated) to vary height/style/color by that block's "density" (1.0 near
-downtown, tapering to 0 at the city edge) -- see examples/city_building.py
-for a worked example using choice()/chance()/switch() for this.
+Each building is applied inside a GenerationSession with
+session.set_city_block(...). Rule files should read plot metadata via
+city_block() inside Begin() (see examples/city_building.py); legacy
+module-level context.cityBlock reads still work when the rule is reloaded.
 """
 import argparse
 import json
@@ -48,6 +48,9 @@ def parse_args(argv=None):
                         help="Shrink each building footprint toward its centroid (meters)")
     parser.add_argument("--skip-roads", action="store_true")
     parser.add_argument("--skip-ground", action="store_true")
+    parser.add_argument("--terrain-seed", type=int, default=0,
+                        help="Seed for the ground's cosmetic surface noise (independent of the "
+                             "layout seed; same seed -> same bumps)")
     parser.add_argument("--max-blocks", type=int, default=None, help="Cap the number of blocks built (for quick previews)")
     parser.add_argument(
         "--game-export", action="store_true",
@@ -226,7 +229,9 @@ def add_chimneys(plot):
     role = plot.get("role")
     if role == "barn":
         count = 1
-    elif role in ("church", "ratusz", "synagogue"):
+    elif role in ("church", "ratusz", "synagogue", "school"):
+        count = 2
+    elif role == "karczma":
         count = 2
     else:
         count = 1 if int(plot.get("storeys") or 1) == 1 else 2
@@ -256,13 +261,211 @@ def add_chimneys(plot):
     bpy.ops.object.select_all(action="DESELECT")
 
 
-def build_ground(radius):
+def _ground_noise(x, y, seed):
+    """
+    Small, high-frequency, deterministic dressing so the ground reads as
+    real dirt/turf rather than a flat plate. This is deliberately NOT the
+    same terrain model used for city-layout siting decisions
+    (pro/city/terrain.py's SyntheticTerrain, which works at a much larger
+    amplitude/wavelength for road-cost weighting and civic siting) -- this
+    one is purely cosmetic, tuned so its bumps are visible at building/
+    plot scale (a few meters) without ever competing with the soil-mound
+    bump at a wall base or looking like actual hills.
+    """
+    import math
+    phase = (seed % 97) * 0.61
+    return (
+        0.06 * math.sin(x * 0.9 + phase) * math.cos(y * 0.7 - phase)
+        + 0.035 * math.sin((x - y) * 1.6 + phase * 1.3)
+        + 0.02 * math.sin(x * 3.1 - phase) * math.cos(y * 2.7 + phase)
+    )
+
+
+def _point_in_polygon(px, py, poly):
+    """Standard even-odd ray-cast point-in-polygon test, poly = [(x, y), ...]."""
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        if (y1 > py) != (y2 > py):
+            x_at_y = x1 + (py - y1) * (x2 - x1) / (y2 - y1)
+            if px < x_at_y:
+                inside = not inside
+    return inside
+
+
+def _point_to_segment_dist(px, py, ax, ay, bx, by):
+    import math
+    dx, dy = bx - ax, by - ay
+    seg_len2 = dx * dx + dy * dy
+    if seg_len2 < 1e-9:
+        return math.hypot(px - ax, py - ay)
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / seg_len2))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
+def _dist_to_polygon(px, py, poly):
+    n = len(poly)
+    return min(
+        _point_to_segment_dist(px, py, poly[i][0], poly[i][1], poly[(i + 1) % n][0], poly[(i + 1) % n][1])
+        for i in range(n)
+    )
+
+
+def _prep_footprints(footprints):
+    """Precompute a bounding circle per footprint so _soil_mound can cheaply
+    skip buildings that are nowhere near a given ground vertex."""
+    import math
+    prepped = []
+    for poly in footprints or []:
+        pts = [(p[0], p[1]) for p in poly]
+        if len(pts) < 3:
+            continue
+        cx = sum(p[0] for p in pts) / len(pts)
+        cy = sum(p[1] for p in pts) / len(pts)
+        bbox_r = max(math.hypot(p[0] - cx, p[1] - cy) for p in pts)
+        prepped.append((pts, cx, cy, bbox_r))
+    return prepped
+
+
+def _soil_mound(x, y, prepped_footprints, height=0.22, reach=1.5):
+    """
+    Real soil settles and mounds slightly against a building's foundation,
+    then tapers back down to grade a meter or so out -- it doesn't stop
+    dead at the wall line the way a flat ground plane implies. Approximate
+    that with an ease-out bump that peaks at each footprint's wall line
+    (height) and fades to 0 by `reach` meters out. Points inside a
+    footprint are left untouched (hidden under that building's own floor,
+    so raising them there would only risk poking the ground mesh through
+    the floor for no visible benefit).
+
+    height/reach defaults are tuned to read clearly once the ground disk
+    has ~0.5–0.7 m vertex spacing (see build_ground subdiv targeting);
+    a 12 cm / 0.9 m mound on a 3 m-spaced mesh is effectively invisible.
+    """
+    bump = 0.0
+    for poly, cx, cy, bbox_r in prepped_footprints:
+        if (x - cx) ** 2 + (y - cy) ** 2 > (bbox_r + reach) ** 2:
+            continue
+        if _point_in_polygon(x, y, poly):
+            continue
+        d = _dist_to_polygon(x, y, poly)
+        if d < reach:
+            t = d / reach
+            bump = max(bump, height * (1.0 - t) ** 2)
+    return bump
+
+
+def _prep_roads(roads, widthPrimary, widthSecondary, widthLocal):
+    import math
+    prepped = []
+    for r in roads or []:
+        (x1, y1), (x2, y2) = r["start"], r["end"]
+        half_w = _road_width_for_hierarchy(r.get("hierarchy"), widthPrimary, widthSecondary, widthLocal) / 2.0
+        cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        half_len = math.hypot(x2 - x1, y2 - y1) / 2.0
+        prepped.append((x1, y1, x2, y2, half_w, cx, cy, half_len))
+    return prepped
+
+
+def _road_clearance(x, y, prepped_roads, shoulder=0.6):
+    """
+    0..1 multiplier applied to the ground's noise/mound at (x, y): 0 right
+    under a road bed (roads are graded flat -- they must not show the
+    ground's cosmetic bumps, and a soil mound would make no sense running
+    down the middle of a street), ramping linearly back up to 1 over
+    `shoulder` meters past the road's edge so the transition isn't a hard
+    seam.
+    """
+    factor = 1.0
+    for x1, y1, x2, y2, half_w, cx, cy, half_len in prepped_roads:
+        reach = half_len + half_w + shoulder
+        if (x - cx) ** 2 + (y - cy) ** 2 > reach * reach:
+            continue
+        edge = _point_to_segment_dist(x, y, x1, y1, x2, y2) - half_w
+        if edge <= 0:
+            return 0.0
+        if edge < shoulder:
+            factor = min(factor, edge / shoulder)
+    return factor
+
+
+def build_ground(radius, footprints=None, roads=None, road_widths=None, seed=0):
+    """
+    Ground disk under the whole town. Two things are sculpted into it
+    (previously it was a perfectly flat plate):
+
+    - `_ground_noise`: subtle, deterministic undulation everywhere, so the
+      ground doesn't read as a sheet of glass.
+    - `_soil_mound`: a small rise hugging the outside of every building
+      footprint, tapering back to grade over `reach` meters -- mimicking
+      how soil actually settles/mounds against a foundation instead of the
+      ground stopping dead at the wall with a knife-edge gap.
+
+    - `_road_clearance`: suppresses both of the above back to 0 under every
+      road bed (plus a short shoulder past its edge) -- roads are graded
+      flat, so without this a road ribbon sitting at a fixed z could end up
+      floating above, or half-buried in, a bumpy/mounded patch of ground
+      that has no idea a road runs through it.
+
+    `footprints` is the same list of (x, y) polygons already used to build
+    each block/plot, and `roads` the same `layout["roads"]` segments (each
+    a dict with "start"/"end"/"hierarchy") used to build the road ribbons --
+    both already in world-space, matching this disk's coordinate frame (see
+    create_footprint_from_points, which places building meshes at their
+    absolute polygon coordinates). `road_widths` is an optional
+    (primary, secondary, local) tuple matching the widths build_roads() was
+    actually called with, so the flattened corridor lines up with the real
+    road mesh instead of guessing a width.
+    """
     import bpy
+    import bmesh
+    import math
+
+    disk_r = radius * 1.25
     bpy.ops.mesh.primitive_cylinder_add(
-        vertices=48, radius=radius * 1.25, depth=0.18, location=(0.0, 0.0, -0.14)
+        vertices=48, radius=disk_r, depth=0.18, location=(0.0, 0.0, -0.14)
     )
     obj = bpy.context.object
     obj.name = "Ground"
+
+    prepped = _prep_footprints(footprints)
+    wp, ws, wl = road_widths or (8.0, 4.5, 3.0)
+    prepped_roads = _prep_roads(roads, wp, ws, wl)
+
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bm.faces.ensure_lookup_table()
+
+    top_z = max(v.co.z for v in bm.verts)
+    top_faces = [f for f in bm.faces if all(abs(v.co.z - top_z) < 1e-4 for v in f.verts)]
+    if top_faces:
+        # Cap starts as one n-gon. Poke + subdivide until top-edge spacing
+        # is fine enough that the ~1.5 m soil-mound band actually contains
+        # vertices (3 levels left ~3.3 m spacing -- mounds were invisible).
+        target_spacing = 0.55
+        rim_edge = (2.0 * math.pi * disk_r) / 48.0
+        levels = max(3, int(math.ceil(math.log2(max(rim_edge / target_spacing, 1.0)))))
+        # Cap runaway cost on huge radii (each level ~4x top faces).
+        levels = min(levels, 7)
+        bmesh.ops.poke(bm, faces=top_faces)
+        top_faces = [f for f in bm.faces if all(abs(v.co.z - top_z) < 1e-4 for v in f.verts)]
+        for _ in range(levels):
+            top_edges = list({e for f in top_faces for e in f.edges})
+            bmesh.ops.subdivide_edges(bm, edges=top_edges, cuts=1, use_grid_fill=True)
+            top_faces = [f for f in bm.faces if all(abs(v.co.z - top_z) < 1e-4 for v in f.verts)]
+
+    for v in bm.verts:
+        if abs(v.co.z - top_z) < 1e-4:
+            x, y = v.co.x, v.co.y
+            clearance = _road_clearance(x, y, prepped_roads)
+            dz = (_ground_noise(x, y, seed) + _soil_mound(x, y, prepped)) * clearance
+            v.co.z += dz
+
+    bm.normal_update()
+    bm.to_mesh(obj.data)
+    bm.free()
     obj.data.materials.append(_diffuse_material("TownGround", (0.33, 0.40, 0.26), 0.95))
     bpy.ops.object.select_all(action="DESELECT")
     return obj
@@ -310,6 +513,20 @@ def setup_scene(radius):
     bpy.ops.object.select_all(action="DESELECT")
 
 
+def _road_width_for_hierarchy(hierarchy, widthPrimary, widthSecondary, widthLocal):
+    """
+    Single source of truth for hierarchy -> road width, shared by
+    build_roads (actual road mesh) and build_ground (so it can flatten a
+    matching-width corridor into the terrain instead of guessing).
+    """
+    widths = {
+        "primary": widthPrimary, "arterial": widthPrimary,
+        "secondary": widthSecondary, "collector": widthSecondary,
+        "local": widthLocal,
+    }
+    return widths.get(hierarchy, widthSecondary)
+
+
 def build_roads(layout, widthPrimary, widthSecondary, widthLocal=3.0):
     """
     Builds one curve object per road hierarchy present in the layout, each
@@ -340,7 +557,6 @@ def build_roads(layout, widthPrimary, widthSecondary, widthLocal=3.0):
         "local": dict(width=widthLocal, color=(0.33, 0.29, 0.24), matName="LocalLane"),
     }
     fallback = dict(width=widthSecondary, color=(0.36, 0.31, 0.24), matName="PackedEarth")
-
     hierarchiesPresent = sorted({r["hierarchy"] for r in layout["roads"]})
     materials = {
         h: _diffuse_material(styles.get(h, fallback)["matName"], styles.get(h, fallback)["color"], 0.92)
@@ -378,17 +594,18 @@ def build_roads(layout, widthPrimary, widthSecondary, widthLocal=3.0):
     return builtObjects
 
 
-def build_blocks(layout, ruleFile, maxBlocks=None, setback=3.0):
+def build_blocks(layout, ruleFile, maxBlocks=None, setback=3.0, session=None):
     import bpy
-    from pro import context as proContext
-    import bpro
     from bpro.bl_util import create_footprint_from_points
+
+    if session is None:
+        raise ValueError("build_blocks requires a GenerationSession")
 
     blocks = layout["blocks"]
     if maxBlocks is not None:
         blocks = blocks[:maxBlocks]
 
-    proContext.blenderContext = bpy.context
+    session.set_blender_context(bpy.context)
     built, failed = 0, 0
 
     for block in blocks:
@@ -402,13 +619,13 @@ def build_blocks(layout, ruleFile, maxBlocks=None, setback=3.0):
                 failed += 1
             continue
 
-        proContext.cityBlock = block
+        session.set_city_block(block)
         polygon = _shrink_towards_centroid(
             block["polygon"], block["centroid"], _setback_for_role(role, setback)
         )
         create_footprint_from_points(bpy.context, polygon, offset=tuple(block["centroid"]))
         try:
-            bpro.apply(ruleFile)
+            session.apply(ruleFile)
         except Exception as e:
             print("WARNING: failed to generate block %d: %s" % (block["id"], e), file=sys.stderr)
             failed += 1
@@ -429,31 +646,33 @@ def build_blocks(layout, ruleFile, maxBlocks=None, setback=3.0):
     return built, failed
 
 
-def build_plots(layout, ruleFile, maxPlots=None):
+def build_plots(layout, ruleFile, maxPlots=None, session=None):
     import bpy
-    from pro import context as proContext
-    import bpro
     from bpro.bl_util import create_footprint_from_points
+
+    if session is None:
+        raise ValueError("build_plots requires a GenerationSession")
 
     plots = list(layout.get("plots") or [])
     if maxPlots is not None:
         plots = plots[:maxPlots]
 
-    proContext.blenderContext = bpy.context
+    session.set_blender_context(bpy.context)
     built, failed = 0, 0
     prefixes = {
         "church": "Church", "ratusz": "Ratusz", "synagogue": "Synagogue",
         "cottage": "Cottage", "kamienica": "Kamienica", "villa": "Villa",
         "workshop": "Workshop", "barn": "Barn",
+        "karczma": "Karczma", "apteka": "Apteka", "school": "School",
     }
 
     for i, plot in enumerate(plots):
-        proContext.cityBlock = plot
+        session.set_city_block(plot)
         create_footprint_from_points(
             bpy.context, plot["polygon"], offset=tuple(plot["centroid"])
         )
         try:
-            bpro.apply(ruleFile)
+            session.apply(ruleFile)
         except Exception as e:
             print("WARNING: failed to generate plot %d: %s" % (plot.get("id", i), e), file=sys.stderr)
             failed += 1
@@ -553,9 +772,8 @@ def main():
         layout = json.load(f)
 
     import bpy
-    from pro import context as proContext
-    proContext.allCeilingLights = []
-    proContext.allGameDoors = []
+    from pro.session import GenerationSession
+
     _clear_scene()
 
     ruleFile = os.path.abspath(args.rule)
@@ -563,40 +781,58 @@ def main():
         print("ERROR: rule file not found: %s" % ruleFile, file=sys.stderr)
         sys.exit(1)
 
-    plaza_blocks = [b for b in layout.get("blocks", []) if b.get("role") == "plaza"]
-    for plaza in plaza_blocks:
-        try:
-            build_plaza(plaza)
-        except Exception as e:
-            print("WARNING: plaza failed: %s" % e, file=sys.stderr)
+    with GenerationSession(blender_context=bpy.context) as session:
+        plaza_blocks = [b for b in layout.get("blocks", []) if b.get("role") == "plaza"]
+        for plaza in plaza_blocks:
+            try:
+                build_plaza(plaza)
+            except Exception as e:
+                print("WARNING: plaza failed: %s" % e, file=sys.stderr)
 
-    if layout.get("plots"):
-        built, failed = build_plots(layout, ruleFile, maxPlots=args.max_blocks)
-        print("Built %d house(s), %d failed" % (built, failed))
-    else:
-        built, failed = build_blocks(
-            layout, ruleFile, maxBlocks=args.max_blocks, setback=args.setback
-        )
-        print("Built %d block(s), %d failed" % (built, failed))
+        if layout.get("plots"):
+            built, failed = build_plots(
+                layout, ruleFile, maxPlots=args.max_blocks, session=session
+            )
+            print("Built %d house(s), %d failed" % (built, failed))
+        else:
+            built, failed = build_blocks(
+                layout, ruleFile, maxBlocks=args.max_blocks, setback=args.setback,
+                session=session,
+            )
+            print("Built %d block(s), %d failed" % (built, failed))
 
-    if not args.skip_roads:
-        roadObjects = build_roads(layout, args.road_width_primary, args.road_width_secondary, args.road_width_local)
-        print("Built %d road curve object(s)" % len(roadObjects))
+        if not args.skip_roads:
+            roadObjects = build_roads(layout, args.road_width_primary, args.road_width_secondary, args.road_width_local)
+            print("Built %d road curve object(s)" % len(roadObjects))
 
-    if not args.skip_ground:
-        radius = float(layout.get("radius") or 170.0)
-        build_ground(radius)
-        setup_scene(radius)
-        print("Added ground, sun, and camera")
+        if not args.skip_ground:
+            radius = float(layout.get("radius") or 170.0)
+            footprints = [
+                b["polygon"] for b in (layout.get("plots") or layout.get("blocks") or [])
+                if b.get("polygon")
+            ]
+            road_widths = (args.road_width_primary, args.road_width_secondary, args.road_width_local)
+            build_ground(
+                radius, footprints=footprints, roads=layout.get("roads"),
+                road_widths=road_widths, seed=args.terrain_seed,
+            )
+            setup_scene(radius)
+            print(
+                "Added ground, sun, and terrain (soil-mounded around %d building(s), "
+                "flattened under %d road segment(s))"
+                % (len(footprints), len(layout.get("roads") or []))
+            )
 
-    if args.game_export:
-        _apply_modifiers_for_export()
-        print("Applied modifiers for game export")
+        if args.game_export:
+            _apply_modifiers_for_export()
+            print("Applied modifiers for game export")
 
-    _export(args.output)
+        _export(args.output)
 
-    base = os.path.splitext(os.path.abspath(args.output))[0]
-    cityLights = getattr(proContext, "allCeilingLights", None) or []
+        base = os.path.splitext(os.path.abspath(args.output))[0]
+        cityLights = list(session.all_ceiling_lights)
+        doors = list(session.all_game_doors)
+
     lightsPath = None
     if cityLights:
         from pro.lights import lights_sidecar
@@ -607,7 +843,6 @@ def main():
 
     if args.game_export:
         from pro.doors import game_sidecar
-        doors = getattr(proContext, "allGameDoors", None) or []
         gamePath = base + ".game.json"
         with open(gamePath, "w") as f:
             json.dump(

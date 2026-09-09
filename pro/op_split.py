@@ -1,3 +1,4 @@
+from .rule_context import resolve_rule_context
 from .base import Operator, ComplexOperator
 from .base import context
 
@@ -13,7 +14,7 @@ def split(direction, *parts, **kwargs):
 		reverse (bool): Split definitions are processed in the reversed order.
 			The default value is False.
 	"""
-	return context.factory["Split"](direction, *parts, **kwargs)
+	return resolve_rule_context().factory["Split"](direction, *parts, **kwargs)
 
 class Split(ComplexOperator):
 	def __init__(self, direction, *parts, **kwargs):

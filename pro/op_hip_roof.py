@@ -1,7 +1,8 @@
+from .rule_context import resolve_rule_context
 from .base import Operator, ComplexOperator, context
 
 def hip_roof(*args, **kwargs):
-    return context.factory["HipRoof"](*args, **kwargs)
+    return resolve_rule_context().factory["HipRoof"](*args, **kwargs)
 
 
 class HipRoof(ComplexOperator):

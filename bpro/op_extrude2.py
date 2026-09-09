@@ -1,9 +1,11 @@
 import pro
 from pro import context
+from pro.rule_context import resolve_rule_context
 
 class Extrude2(pro.op_extrude2.Extrude2):
-    def execute(self):
-        shape = context.getState().shape
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
+        shape = ctx.getState().shape
         # We now know the absolute shape size, so let's update self.parts
         # for self.symmetric = True and self.relativeCoord1 = False
         if self.symmetric and not self.relativeCoord1:
@@ -11,9 +13,9 @@ class Extrude2(pro.op_extrude2.Extrude2):
         shapesWithRule = shape.extrude2(self.parts, self)
         # apply the rule for each shape in shapesWithRule list
         for entry in shapesWithRule:
-            context.pushState(shape=entry[0])
-            entry[1].execute()
-            context.popState()
+            ctx.pushState(shape=entry[0])
+            entry[1].execute(ctx)
+            ctx.popState()
     
     def updateSymmetricAbsolute(self, shape):
         # Update self.parts for self.symmetric = True and self.relativeCoord1 = False

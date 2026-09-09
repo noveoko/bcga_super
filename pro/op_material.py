@@ -1,8 +1,9 @@
+from .rule_context import resolve_rule_context
 from .base import Operator, context
 
 
 def material(_material):
-    return context.factory["Material"](_material)
+    return resolve_rule_context().factory["Material"](_material)
 
 
 class Material(Operator):

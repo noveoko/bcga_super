@@ -9,14 +9,30 @@ from .util import rotation_zNormal_xHorizontal, getEndVertex, unityThreshold, zA
 horizontalFaceThreshold = 0.70711 # math.sqrt(0.5)
 
 
+def _geometry_api():
+    """Active GeometryBackend, or None if not attached yet."""
+    from pro.rule_context import resolve_rule_context
+    try:
+        return resolve_rule_context().geometry.api
+    except RuntimeError:
+        return None
+
+
 def getInitialShape(bm):
     """
     Get initial shape out of bmesh
     """
+    if not bm.faces:
+        raise ValueError("Cannot create BCGA shape: mesh contains no faces")
+
     face = bm.faces[0]
     # check where the face normal is pointing and reverse it, if necessary
     if face.normal[2]<0:
-        bmesh.ops.reverse_faces(bm, faces=(face,))
+        api = _geometry_api()
+        if api is not None:
+            api.reverse_faces((face,))
+        else:
+            bmesh.ops.reverse_faces(bm, faces=(face,))
     
     constructor = Shape2d
         
@@ -32,7 +48,17 @@ def getInitialShape(bm):
         v4 = v[0].co - v[3].co
         # check if have 3 right angles
         zero = 0.001
-        if abs( v1.dot(v2)/(v1.length*v2_) )<=zero and abs( v2.dot(v3)/(v2_*v3_)<=zero ) and abs( v3.dot(v4)/(v3_*v4.length)<=zero ):
+        def is_perpendicular(a, b):
+            denom = a.length * b.length
+            if denom <= zero:
+                return False
+            return abs(a.dot(b) / denom) <= zero
+
+        if (
+            is_perpendicular(v1, v2)
+            and is_perpendicular(v2, v3)
+            and is_perpendicular(v3, v4)
+        ):
             constructor = Rectangle
             
     return constructor(face.loops[0])
@@ -67,17 +93,21 @@ class Shape2d:
         """
         depth = extrude.depth
         interior = extrude.interior
+        api = _geometry_api()
         bm = context.bm
         # store the reference to the original face
         originalFace = self.face
-        # execute extrude operator
-        geom = bmesh.ops.extrude_face_region(bm, geom=(originalFace,))
-        # find extruded face
-        for extrudedFace in geom["geom"]:
-            if isinstance(extrudedFace, bmesh.types.BMFace):
-                break
-        # perform translation along the extrudedFace normal
-        bmesh.ops.translate(bm, verts=extrudedFace.verts, vec=depth*extrudedFace.normal)
+        # Mesh mutation goes through GeometryBackend (Blender or Memory).
+        if api is not None:
+            result = api.extrude_face_region(originalFace)
+            extrudedFace = result.extruded_face
+            api.translate_verts(extrudedFace.verts, depth * extrudedFace.normal)
+        else:
+            geom = bmesh.ops.extrude_face_region(bm, geom=(originalFace,))
+            for extrudedFace in geom["geom"]:
+                if isinstance(extrudedFace, bmesh.types.BMFace):
+                    break
+            bmesh.ops.translate(bm, verts=extrudedFace.verts, vec=depth*extrudedFace.normal)
         
         # Find a face connecting originalFace and extrudedFace, that contains the original first loop.
         # The normal for the original face has been reversed, so self.firstLoop doesn't contain
@@ -146,7 +176,10 @@ class Shape2d:
                 if shape != self:
                     shape.firstLoop = shape.firstLoop.link_loop_next
                     shape.origin = shape.firstLoop.vert.co
-            bmesh.ops.reverse_faces(bm, faces = faces)
+            if api is not None:
+                api.reverse_faces(faces)
+            else:
+                bmesh.ops.reverse_faces(bm, faces=faces)
         
         # Inherit material from the original shape
         # depending on settings (inheritMaterialAll, inheritMaterialSide, inheritMaterialExtruded).
@@ -205,6 +238,11 @@ class Shape2d:
         loop = loop.link_loop_next
         v2 = getEndVertex(loop).co - loop.vert.co
         normal = v1.cross(v2)
+        if normal.length <= 1e-12:
+            raise ValueError(
+                "Cannot calculate shape normal: first two shape edges "
+                "are collinear or degenerate"
+            )
         normal.normalize()
         return normal
     

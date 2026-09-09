@@ -3,13 +3,8 @@ import os
 import sys
 import inspect
 import bpy
-import bmesh
 
 from pro import context
-
-from .material import MaterialManager
-
-from .util import VertexRegistry
 
 from .op_decompose import Decompose
 from .op_split import Split
@@ -38,8 +33,6 @@ from pro.base import Param
 
 from .shape import getInitialShape
 
-from .join import JoinManager
-
 
 def buildFactory():
     factory = context.factory
@@ -67,7 +60,7 @@ def buildFactory():
     factory["Openings"] = Openings
 
 
-def apply(ruleFile, startRule="Begin", trace=False):
+def apply(ruleFile, startRule="Begin", trace=False, session=None):
     """
     Args:
         trace (bool): when True, a full resolved JSON-serializable trace of
@@ -77,10 +70,35 @@ def apply(ruleFile, startRule="Begin", trace=False):
             Does not change this function's return value, so existing
             callers doing `module, params = bpro.apply(...)` keep working
             unchanged. False by default: zero extra overhead when unused.
+        session: optional GenerationSession. When provided (or already active
+            via `with GenerationSession()`), the module-level `pro.context`
+            proxy forwards to that session's Context for the apply.
     """
+    from pro.session import get_active_session
+
+    # Activate the given session only if it is not already the active one
+    # (so a `with GenerationSession()` batch does not flap ContextVar).
+    activated_here = False
+    if session is not None and get_active_session() is not session:
+        session.activate()
+        activated_here = True
+
+    try:
+        return _apply_inner(ruleFile, startRule=startRule, trace=trace)
+    finally:
+        if activated_here:
+            session.deactivate()
+
+
+def _apply_inner(ruleFile, startRule="Begin", trace=False):
     from .bl_util import create_rectangle
 
     blenderContext = context.blenderContext
+    if blenderContext is None:
+        raise RuntimeError(
+            "bpro.apply requires context.blenderContext (set it on a "
+            "GenerationSession or assign context.blenderContext = bpy.context)"
+        )
     obj = blenderContext.object
     if obj:
         bpy.ops.object.mode_set(mode="OBJECT")
@@ -91,7 +109,17 @@ def apply(ruleFile, startRule="Begin", trace=False):
             # delete if it's non-flat mesh
             bpy.ops.object.delete()
         create_rectangle(blenderContext, 20, 10)
-    # apply all transformations to the active Blender object
+    # Bake location/rotation/scale into the mesh so rule execution (and
+    # door/light records derived from bmesh verts) are in world space.
+    # transform_apply only affects *selected* objects in Blender 5.x -- the
+    # footprint is often active-but-unselected after create_footprint_from_points
+    # deselects everything, which previously left obj.location at the plot
+    # centroid while door/light children were spawned at local coords near
+    # the origin (the "everything clumped in the rynek" bug).
+    obj = blenderContext.object
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     # setting the path to the rule for context
     context.ruleFile = ruleFile if isinstance(
@@ -101,82 +129,74 @@ def apply(ruleFile, startRule="Begin", trace=False):
     # create a uv layer for the mesh
     # TODO: a separate pass through the rules is needed to find out how many uv layers are needed
     mesh.uv_layers.new(name=Texture.defaultLayer)
-    # initialize the context
-    context.init()
-    context.ceilingLights = []
-    context.gameDoors = []
-    if getattr(context, "allCeilingLights", None) is None:
-        context.allCeilingLights = []
-    if getattr(context, "allGameDoors", None) is None:
-        context.allGameDoors = []
-    # initializing bmesh instance
-    bm = bmesh.new()
-    bm.from_mesh(mesh)
-    if hasattr(bm.faces, "ensure_lookup_table"):
-        bm.faces.ensure_lookup_table()
-    context.addAttribute("bm", bm)
-    # list of unused faces for removal
-    context.addAttribute("facesForRemoval", [])
-    # set up the material registry
-    context.addAttribute("materialManager", MaterialManager())
-    # set up vertex registry to ensure vertex uniqueness
-    context.addAttribute("vertexRegistry", VertexRegistry())
-    # set a constructor for join manager, it may be replaced by actual instance of the join manager
-    context.addAttribute("joinManager", JoinManager)
 
-    # push the initial state with the initial shape to the execution stack
-    context.pushState(shape=getInitialShape(bm))
+    context.begin_apply()
+    bm = None
+    geo_backend = None
+    try:
+        # Phase 4: Blender backends own bmesh / MaterialManager construction.
+        from .backends import attach_blender_backends
+        bm, geo_backend = attach_blender_backends(
+            context, mesh, blender_context=blenderContext
+        )
 
-    if isinstance(ruleFile, str):
-        module = getModule(ruleFile)
+        # push the initial state with the initial shape to the execution stack
+        context.pushState(shape=getInitialShape(bm))
 
-        # prepare context internal stuff
-        context.prepare()
-        # params is a list of tuples: (paramName, instanceofParamClass)
+        if isinstance(ruleFile, str):
+            # Re-executes the rule file; module-level param() calls re-register
+            # into context.params (cleared by begin_apply).
+            module = getModule(ruleFile)
+        else:
+            # ruleFile is already a module (addon re-apply path): no re-import,
+            # so re-bind context.params from the module's Param instances.
+            module = ruleFile
         params = getParams(module)
-    else:
-        # ruleFile is actually a module
-        module = ruleFile
+        context.params = [p for _name, p in params]
+        # Always resolve random params for this apply (string and module paths).
+        context.prepare()
+        # setting the current operator to a dummy one to avoid an exception
+        class dummy:
+            def addChildOperator(self, o): pass
 
-    # setting the current operator to a dummy one to avoid an exception
-    class dummy:
-        def addChildOperator(self, o): pass
+            def removeChildOperators(self, numParts): pass
+        context.operator = dummy()
+        # evaluate the rule set
+        context.tracing = bool(trace)
+        rootRule = getattr(module, startRule)()
+        rootRule.execute()
+        context.buildingTrace = rootRule.to_dict() if trace else None
 
-        def removeChildOperators(self, numParts): pass
-    context.operator = dummy()
-    # evaluate the rule set
-    context.tracing = bool(trace)
-    rootRule = getattr(module, startRule)()
-    rootRule.execute()
-    context.buildingTrace = rootRule.to_dict() if trace else None
+        # remove unused faces from context.facesForRemoval
+        bmesh.ops.delete(bm, geom=context.facesForRemoval, context='FACES')
+        # there still may be some doubles, inspite of the use of util.VertexMaterial
+        #bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
 
-    # remove unused faces from context.facesForRemoval
-    bmesh.ops.delete(bm, geom=context.facesForRemoval, context='FACES')
-    # there still may be some doubles, inspite of the use of util.VertexMaterial
-    #bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
+        # clean up context.facesForRemoval
+        context.facesForRemoval = []
+        context.executeDeferred()
+        # remove unused faces from context.facesForRemoval
+        bmesh.ops.delete(bm, geom=context.facesForRemoval, context='FACES')
 
-    # clean up context.facesForRemoval
-    context.facesForRemoval = []
-    context.executeDeferred()
-    # remove unused faces from context.facesForRemoval
-    bmesh.ops.delete(bm, geom=context.facesForRemoval, context='FACES')
-
-    # write everything back to the mesh
-    bm.to_mesh(mesh)
-    records = getattr(context, "ceilingLights", None) or []
-    if records:
-        from .lights import spawn_ceiling_lights
-        spawn_ceiling_lights(records, parent=blenderContext.object)
-        context.allCeilingLights.extend(records)
-    doorRecords = getattr(context, "gameDoors", None) or []
-    if doorRecords:
-        from .doors import spawn_door_leaves
-        spawned = spawn_door_leaves(doorRecords, parent=blenderContext.object)
-        context.allGameDoors.extend(spawned)
-    # cleaning context from blender specific members
-    context.removeAttributes()
-
-    return (module, params)
+        # write everything back to the mesh (backend still owns bm until end_apply)
+        if geo_backend is not None:
+            geo_backend.write_to_mesh(mesh)
+        else:
+            bm.to_mesh(mesh)
+        records = getattr(context, "ceilingLights", None) or []
+        if records:
+            from .lights import spawn_ceiling_lights
+            spawn_ceiling_lights(records, parent=blenderContext.object)
+            context.allCeilingLights.extend(records)
+        doorRecords = getattr(context, "gameDoors", None) or []
+        if doorRecords:
+            from .doors import spawn_door_leaves
+            spawned = spawn_door_leaves(doorRecords, parent=blenderContext.object)
+            context.allGameDoors.extend(spawned)
+        return (module, params)
+    finally:
+        # geometry.close() (via end_apply) frees the bmesh through the backend
+        context.end_apply()
 
 
 def isParam(member):

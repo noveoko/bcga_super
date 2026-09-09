@@ -1,10 +1,11 @@
+from .rule_context import resolve_rule_context
 from .base import ComplexOperator, context, countOperator
 
 def rectangle(xSize, ySize, operator=None, **kwargs):
     """
     Creates a rectangle with sides along local x and y axis of the current shape
     """
-    return context.factory["Rectangle"](xSize, ySize, operator, **kwargs)
+    return resolve_rule_context().factory["Rectangle"](xSize, ySize, operator, **kwargs)
 
 class Rectangle(ComplexOperator):
     def __init__(self, xSize, ySize, operator, **kwargs):

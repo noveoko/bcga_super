@@ -19,7 +19,6 @@ never called from this script, since those raise
 """
 import argparse
 import os
-import random
 import sys
 
 
@@ -112,14 +111,8 @@ def _export(output_path):
 def main():
     args = parse_args()
 
-    if args.seed is not None:
-        random.seed(args.seed)
-
     import bpy
-    from pro import context as proContext
-    import bpro
-
-    proContext.blenderContext = bpy.context
+    from pro.session import GenerationSession
 
     _clear_scene()
 
@@ -129,27 +122,28 @@ def main():
         sys.exit(1)
 
     traces = [] if args.export_json else None
-    proContext.allCeilingLights = []
-    proContext.allGameDoors = []
 
-    for i in range(max(1, args.count)):
-        # bpro.apply() creates its own default rectangle footprint via
-        # create_rectangle() whenever there's no valid single-face mesh
-        # already selected/active, which is always true right after
-        # _clear_scene(), so each iteration starts from a clean footprint.
-        module, params = bpro.apply(ruleFile, trace=bool(args.export_json))
+    with GenerationSession(seed=args.seed, blender_context=bpy.context) as session:
+        for i in range(max(1, args.count)):
+            # session.apply() creates its own default rectangle footprint via
+            # create_rectangle() whenever there's no valid single-face mesh
+            # already selected/active, which is always true right after
+            # _clear_scene(), so each iteration starts from a clean footprint.
+            session.apply(ruleFile, trace=bool(args.export_json))
 
-        if traces is not None:
-            traces.append(proContext.buildingTrace)
+            if traces is not None:
+                traces.append(session.building_trace)
 
-        obj = bpy.context.object
-        if obj is not None and args.count > 1:
-            obj.location.x += i * (args.width + args.spacing)
-            obj.name = "BCGA_%03d" % i
+            obj = bpy.context.object
+            if obj is not None and args.count > 1:
+                obj.location.x += i * (args.width + args.spacing)
+                obj.name = "BCGA_%03d" % i
 
-        # deselect so the next iteration's create_rectangle() fallback
-        # in bpro.apply() doesn't try to reuse/delete this object
-        bpy.ops.object.select_all(action="DESELECT")
+            # deselect so the next iteration's create_rectangle() fallback
+            # in bpro.apply() doesn't try to reuse/delete this object
+            bpy.ops.object.select_all(action="DESELECT")
+
+        allLights = list(session.all_ceiling_lights)
 
     _export(args.output)
 
@@ -162,7 +156,6 @@ def main():
             json.dump(payload, f, indent=2)
         print("Wrote building trace JSON to %s" % jsonPath)
 
-    allLights = getattr(proContext, "allCeilingLights", None) or []
     if allLights:
         from pro.lights import lights_sidecar
         import json

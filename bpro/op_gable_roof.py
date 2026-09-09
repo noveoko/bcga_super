@@ -1,13 +1,15 @@
 import pro
 from pro import context
+from pro.rule_context import resolve_rule_context
 from .polygon import Roof
 from .polygon_manager import Manager
 from .bl_util import get_roof_shape
 
 
 class GableRoof(pro.op_gable_roof.GableRoof):
-    def execute(self):
-        shape = context.getState().shape
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
+        shape = ctx.getState().shape
         roofShape = get_roof_shape(shape)
         face = roofShape.face
         verts = list(face.verts)
@@ -42,6 +44,6 @@ class GableRoof(pro.op_gable_roof.GableRoof):
         roof.roof(*pitches)
         roofShape.delete()
         for entry in manager.shapes:
-            context.pushState(shape=entry[0])
-            entry[1].execute()
-            context.popState()
+            ctx.pushState(shape=entry[0])
+            entry[1].execute(ctx)
+            ctx.popState()

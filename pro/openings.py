@@ -35,6 +35,8 @@ class WallSegment:
         self.start = (float(start[0]), float(start[1]))
         self.end = (float(end[0]), float(end[1]))
         self.thickness = float(thickness)
+        if self.thickness < 0:
+            raise ValueError("wall thickness must be non-negative")
         self.openings = []
 
     @property
@@ -43,14 +45,30 @@ class WallSegment:
 
     def add_opening(self, width=0.9, height=2.1, offset=None, sill_height=0.0):
         width = float(width)
+        height = float(height)
+        sill_height = float(sill_height)
+        if width <= 0:
+            raise ValueError("opening width must be positive")
+        if height <= 0:
+            raise ValueError("opening height must be positive")
+        if sill_height < 0:
+            raise ValueError("opening sill_height must be non-negative")
+        if width > self.length + 1e-9:
+            raise ValueError(
+                "opening width %.6g exceeds wall length %.6g"
+                % (width, self.length)
+            )
         if offset is None:
             offset = max(0.0, (self.length - width) / 2.0)
+        offset = float(offset)
+        if offset < -1e-9 or offset + width > self.length + 1e-9:
+            raise ValueError("opening must fit within wall segment")
         self.openings.append(
             Opening(
-                offset=float(offset),
+                offset=offset,
                 width=width,
-                height=float(height),
-                sill_height=float(sill_height),
+                height=height,
+                sill_height=sill_height,
             )
         )
         return self

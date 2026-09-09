@@ -1,3 +1,4 @@
+from .rule_context import resolve_rule_context
 from .base import Operator, ComplexOperator, context
 import pro
 
@@ -8,7 +9,7 @@ cap2 = "cap2"
 cap = "cap"
 
 def extrude2(*args, **kwargs):
-    return context.factory["Extrude2"](*args, **kwargs)
+    return resolve_rule_context().factory["Extrude2"](*args, **kwargs)
 
 class Extrude2(ComplexOperator):
     def __init__(self, *args, **kwargs):

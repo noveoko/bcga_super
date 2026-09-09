@@ -1,5 +1,6 @@
 import pro
 from pro import context
+from pro.rule_context import resolve_rule_context
 from pro.stairs import stair_profile
 
 from .shape import Rectangle
@@ -8,13 +9,15 @@ from .shape import Rectangle
 class _DeleteFace:
     """Drops extrude2's closing face without going through Operator.__init__."""
 
-    def execute(self):
-        context.getState().shape.delete()
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
+        ctx.getState().shape.delete()
 
 
 class Stairwell(pro.op_stairwell.Stairwell):
-    def execute(self):
-        shape = context.getState().shape
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
+        shape = ctx.getState().shape
         if not isinstance(shape, Rectangle):
             return
         w, h = shape.size()
@@ -29,6 +32,6 @@ class Stairwell(pro.op_stairwell.Stairwell):
             self.last = _DeleteFace()
         shapesWithRule = shape.extrude2(self.parts, self)
         for entry in shapesWithRule:
-            context.pushState(shape=entry[0])
-            entry[1].execute()
-            context.popState()
+            ctx.pushState(shape=entry[0])
+            entry[1].execute(ctx)
+            ctx.popState()

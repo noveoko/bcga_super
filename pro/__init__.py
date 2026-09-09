@@ -41,7 +41,12 @@ from .base import shape
 from .base import param, random
 from .base import context
 from .base import Rule
-
+from .session import GenerationSession, get_active_session
+from .rule_context import RuleContext, resolve_rule_context, get_active_rule_context
+from .geometry import GeometryContext
+from .material_context import MaterialContext
+from .city_block import city_block, city_block_at_import
+from .geom_api import GeometryBackend, ExtrudeFaceResult, DuplicateFacesResult
 x = "x"
 y = "y"
 z = "z"

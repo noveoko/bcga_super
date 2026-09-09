@@ -1,5 +1,6 @@
 from pro import right, left, top, bottom
 from pro import context
+from pro.rule_context import resolve_rule_context
 from pro.base import Operator
 from .shape import createRectangle
 from .util import zero
@@ -189,7 +190,7 @@ class Band:
             shape = createRectangle((loop.vert, prevVertEx1, prevVertEx2, loop.link_loop_prev.vert))
             if self.join.material:
                 context.pushState(shape=shape)
-                self.join.material.execute()
+                self.join.material.execute(resolve_rule_context())
                 context.popState()
 
         index = self.end1
@@ -212,19 +213,19 @@ class Band:
             shape = createRectangle((prevVertEx1, vertEx1, vertEx2, prevVertEx2))
             if self.join.material:
                 context.pushState(shape=shape)
-                self.join.material.execute()
+                self.join.material.execute(resolve_rule_context())
                 context.popState()
             # lower cap
             shape = createRectangle((_loop.vert, _loopNext.vert, vertEx1, prevVertEx1))
             if self.join.material:
                 context.pushState(shape=shape)
-                self.join.material.execute()
+                self.join.material.execute(resolve_rule_context())
                 context.popState()
             # upper cap
             shape = createRectangle((_loopNext.link_loop_next.vert, _loop.link_loop_prev.vert, prevVertEx2, vertEx2))
             if self.join.material:
                 context.pushState(shape=shape)
-                self.join.material.execute()
+                self.join.material.execute(resolve_rule_context())
                 context.popState()
             
             vec1 = vec2
@@ -247,24 +248,24 @@ class Band:
             shape = createRectangle((vertEx1, loop.vert, loop.link_loop_next.vert, vertEx2))
             if self.join.material:
                 context.pushState(shape=shape)
-                self.join.material.execute()
+                self.join.material.execute(resolve_rule_context())
                 context.popState()
         shape = createRectangle((prevVertEx1, vertEx1, vertEx2, prevVertEx2))
         if self.join.material:
             context.pushState(shape=shape)
-            self.join.material.execute()
+            self.join.material.execute(resolve_rule_context())
             context.popState()
         # lower cap
         shape = createRectangle((_loop.vert, _loopNext.vert, vertEx1, prevVertEx1))
         if self.join.material:
             context.pushState(shape=shape)
-            self.join.material.execute()
+            self.join.material.execute(resolve_rule_context())
             context.popState()
         # upper cap
         shape = createRectangle((_loopNext.link_loop_next.vert, _loop.link_loop_prev.vert, prevVertEx2, vertEx2))
         if self.join.material:
             context.pushState(shape=shape)
-            self.join.material.execute()
+            self.join.material.execute(resolve_rule_context())
             context.popState()
     
     def getDepth(self, loop):

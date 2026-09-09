@@ -62,7 +62,7 @@ python pro/city/layout.py --output out/city.json --blocks 40 --radius 150 --seed
 blender --background --factory-startup --python city_builder.py -- --layout out/city.json --rule examples/city_building.py --output out/city.blend
 ```
 
-`examples/city_building.py` reads `context.cityBlock["density"]` (1 at center, 0 at the edge) and varies height / colour / roof.
+`examples/city_building.py` reads density via `city_block()` inside `Begin()` (1 at center, 0 at the edge) and varies height / colour / roof. Prefer that over module-level `context.cityBlock` â€” see `docs/CONTEXT.md` (Phase 5).
 
 ## Blender addon
 
@@ -97,7 +97,7 @@ On top of upstream BCGA (`extrude`, `split`, `decompose`, `hip_roof`, `color`, â
 | `hip_roof(pitch[, overhang], ..., face>>.., soffit>>.., fascia>>.., fasciaSize=..)` | Hip roof; same overhang mechanics as `gable_roof`. Per-edge pitches/overhangs supported (`hip_roof(p1,o1, p2,o2, p3,o3, p4,o4, ...)`) |
 | `param(value, group="Facade", unit="m")` | Sidebar grouping |
 
-`generate.py` / `city_builder.py` set `context.cityBlock` before each apply. Standalone rules should fall back when it is `None`.
+`generate.py` / `city_builder.py` open a `GenerationSession` and call `session.set_city_block(...)` before each apply. Rule files should read it with `city_block(default)` inside `Begin()` (standalone runs get the default when unset).
 
 ## Tests
 

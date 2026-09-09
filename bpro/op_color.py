@@ -1,11 +1,13 @@
 import bpy
 import pro
 from pro import context
+from pro.rule_context import resolve_rule_context
 
 
 class Color(pro.op_color.Color):
-    def execute(self):
-        materialManager = context.materialManager
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
+        materialManager = ctx.materialManager
         colorHex = self.colorHex
         material = materialManager.getMaterial(colorHex)
         if material:
@@ -30,7 +32,7 @@ class Color(pro.op_color.Color):
         # of its own, so apply the material to each of its constituent
         # 2D faces instead, consistent with how extrude()'s
         # inheritMaterialAll already assigns material_index per-face.
-        shape = context.getState().shape
+        shape = ctx.getState().shape
         for shape2d in getattr(shape, "shapes", (shape,)):
             shape2d.clearUVlayers()
             shape2d.face.material_index = materialIndex

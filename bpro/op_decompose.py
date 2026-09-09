@@ -1,7 +1,9 @@
 import pro
 from pro import context
+from pro.rule_context import resolve_rule_context
 
-def decompose_execute(shape, _parts):	
+def decompose_execute(shape, _parts, ctx=None):
+	ctx = resolve_rule_context(ctx)
 	# create a dict from the operatorDef list
 	parts = {}
 	for part in _parts:
@@ -13,12 +15,13 @@ def decompose_execute(shape, _parts):
 		# now apply the rule for each decomposed 2D-shape
 		for selector in components:
 			for _shape in components[selector]:
-				context.pushState(shape=_shape)
-				parts[selector].execute()
-				context.popState()
+				ctx.pushState(shape=_shape)
+				parts[selector].execute(ctx)
+				ctx.popState()
 
 
 class Decompose(pro.op_decompose.Decompose):
 	
-	def execute(self):
-		decompose_execute(context.getState().shape, self.parts)
+	def execute(self, ctx=None):
+		ctx = resolve_rule_context(ctx)
+		decompose_execute(ctx.getState().shape, self.parts, ctx)

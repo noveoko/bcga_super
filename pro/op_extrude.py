@@ -1,3 +1,4 @@
+from .rule_context import resolve_rule_context
 from .base import ComplexOperator, context, countOperator
 
 def extrude(depth, *parts, **kwargs):
@@ -19,7 +20,7 @@ def extrude(depth, *parts, **kwargs):
 		positioned. This option is relevant when extrude(..) is followed by join(..)
 			The default value is False
 	"""
-	return context.factory["Extrude"](depth, *parts, **kwargs)
+	return resolve_rule_context().factory["Extrude"](depth, *parts, **kwargs)
 
 class Extrude(ComplexOperator):
 	def __init__(self, depth, *parts, **kwargs):

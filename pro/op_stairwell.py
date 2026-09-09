@@ -1,3 +1,4 @@
+from .rule_context import resolve_rule_context
 from .base import Operator, ComplexOperator, context, countOperator
 
 
@@ -13,7 +14,7 @@ def stairwell(rise, *args, **kwargs):
     last defaults to delete() at execute time (drops extrude2's closing face
     back down to the original far edge at z=0).
     """
-    return context.factory["Stairwell"](rise, *args, **kwargs)
+    return resolve_rule_context().factory["Stairwell"](rise, *args, **kwargs)
 
 
 class Stairwell(ComplexOperator):

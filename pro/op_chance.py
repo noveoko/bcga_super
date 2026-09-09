@@ -1,5 +1,5 @@
-import random as randomlib
-from .base import Operator, ComplexOperator, context
+from .base import Operator, ComplexOperator
+from .rule_context import resolve_rule_context, call_execute
 
 
 def chance(*weighted_parts):
@@ -16,7 +16,7 @@ def chance(*weighted_parts):
             (0.1, PaintedWall()),
         )
     """
-    return context.factory["Chance"](*weighted_parts)
+    return resolve_rule_context().factory["Chance"](*weighted_parts)
 
 
 class Chance(ComplexOperator):
@@ -31,12 +31,15 @@ class Chance(ComplexOperator):
                 numOperators += 1
         super().__init__(numOperators)
 
-    def execute(self):
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
         weights = [w for w, _ in self.parts]
         total = sum(weights)
         if total <= 0:
             raise ValueError("chance() weights must sum to a positive number")
-        r = randomlib.uniform(0, total)
+        # Use BCGA's session RNG (ctx.rng), not the process-global random
+        # module, so set_seed() controls chance() the same way as random()/choice().
+        r = ctx.rng.uniform(0, total)
         upto = 0.0
         chosen = self.parts[-1][1]
         for w, op in self.parts:
@@ -44,4 +47,4 @@ class Chance(ComplexOperator):
             if r <= upto:
                 chosen = op
                 break
-        chosen.execute()
+        call_execute(chosen, ctx)

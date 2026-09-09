@@ -1,13 +1,15 @@
 import mathutils
 import pro
 from pro import context
+from pro.rule_context import resolve_rule_context
 from .util import xAxis, yAxis
 from .shape import createRectangle, rotation_zNormal_xHorizontal
 
 class Rectangle(pro.op_rectangle.Rectangle):
-    def execute(self):
-        bm = context.bm
-        state = context.getState()
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
+        bm = ctx.bm
+        state = ctx.getState()
         shape = state.shape
         # get rectangle origin
         origin = shape.center()
@@ -16,7 +18,7 @@ class Rectangle(pro.op_rectangle.Rectangle):
         matrix = rotation_zNormal_xHorizontal(shape.firstLoop, shape.getNormal(), True)
 
         if self.replace:
-            context.popState()
+            ctx.popState()
             shape.delete()
 
         shape = createRectangle((
@@ -26,8 +28,8 @@ class Rectangle(pro.op_rectangle.Rectangle):
             bm.verts.new(matrix @ (-xVec + yVec) + origin),
         ))
         if self.operator:
-            context.pushState(shape=shape)
-            self.operator.execute()
-            context.popState()
+            ctx.pushState(shape=shape)
+            self.operator.execute(ctx)
+            ctx.popState()
         elif self.replace:
-            context.pushState(shape=shape)
+            ctx.pushState(shape=shape)

@@ -1,13 +1,15 @@
 import pro
 from pro import context
+from pro.rule_context import resolve_rule_context
 from pro.base import Operator
 from .polygon import Polygon
 from .polygon_manager import Manager
 from .op_delete import Delete
 
 class Inset2(pro.op_inset2.Inset2):
-    def execute(self):
-        shape = context.getState().shape
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
+        shape = ctx.getState().shape
         face = shape.face
         manager = Manager()
         polygon = Polygon(face.verts, shape.getNormal(), manager)
@@ -32,13 +34,13 @@ class Inset2(pro.op_inset2.Inset2):
         if not isinstance(cap, Delete):
             shape = polygon.getShape(type(shape))
             if cap:
-                context.pushState(shape=shape)
-                self.cap.execute()
-                context.popState()
+                ctx.pushState(shape=shape)
+                self.cap.execute(ctx)
+                ctx.popState()
         if not self.keepOriginal:
-            context.facesForRemoval.append(face)
+            ctx.facesForRemoval.append(face)
         # finalizing: if there is a rule for the shape, execute it
         for entry in manager.shapes:
-            context.pushState(shape=entry[0])
-            entry[1].execute()
-            context.popState()
+            ctx.pushState(shape=entry[0])
+            entry[1].execute(ctx)
+            ctx.popState()

@@ -22,13 +22,20 @@ def door_record(poly, z0, opening, kind="interior", plot_id=None, inward=None):
     lo, hi = _span_along(poly, edgeDir)
     c = _centroid(poly)
     perp = (-edgeDir[1], edgeDir[0])
+    # `offset` is measured from `lo` along the *original* edgeDir. Compute the
+    # physical target position (t) in that original frame first, then, if we
+    # flip the frame below, re-express that same physical point in the new
+    # (reversed) frame by negating it -- rather than reusing the raw offset
+    # against a flipped `lo`, which would place the hinge at the mirror-image
+    # position along the wall instead of at the real opening.
+    t = lo + o.offset
     if inward is not None:
         # flip edgeDir so hinge "left" matches inward cross up ≈ edge
         if _dot(perp, inward) < 0:
             perp = (-perp[0], -perp[1])
             edgeDir = (-edgeDir[0], -edgeDir[1])
             lo, hi = -hi, -lo
-    t = lo + o.offset
+            t = -t
     hinge_xy = _add(c, _mul(edgeDir, t - _dot(c, edgeDir)))
     # sit hinge on the inner face of a thick wall when possible
     thick = 0.04

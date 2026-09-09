@@ -2,6 +2,7 @@ import os
 import bpy
 
 from pro import context
+from pro.rule_context import resolve_rule_context
 from pro.base import Operator
 
 
@@ -16,15 +17,16 @@ class Texture(Operator):
         self.height = height
         super().__init__()
     
-    def execute(self):
-        shape = context.getState().shape
-        bm = context.bm
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
+        shape = ctx.getState().shape
+        bm = ctx.bm
         if self.path=="" and self.width==0 and self.height==0:
             pass
         else:
             shape.setUV(self.layer, self)
             # now deal with the related material
-            materialManager = context.materialManager
+            materialManager = ctx.materialManager
             path = self.path
             name = os.path.basename(path)
             material = materialManager.getMaterial(name)

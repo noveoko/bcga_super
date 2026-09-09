@@ -22,6 +22,7 @@ def create_footprint_from_points(blenderContext, points, offset=(0, 0)):
     obj.location.x += ox
     obj.location.y += oy
     scene.collection.objects.link(obj)
+    obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
     mesh.update()
     return obj
@@ -73,6 +74,7 @@ def create_rectangle(blenderContext, sizeX, sizeY):
     obj = bpy.data.objects.new(newObjectName, mesh)
     obj.location = scene.cursor.location
     scene.collection.objects.link(obj)
+    obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
     mesh.update()
 

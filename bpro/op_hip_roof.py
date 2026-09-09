@@ -1,12 +1,14 @@
 import pro
 from pro import context
+from pro.rule_context import resolve_rule_context
 from .polygon import Roof
 from .polygon_manager import Manager
 from .bl_util import get_roof_shape
 
 class HipRoof(pro.op_hip_roof.HipRoof):
-    def execute(self):
-        shape = context.getState().shape
+    def execute(self, ctx=None):
+        ctx = resolve_rule_context(ctx)
+        shape = ctx.getState().shape
         roofShape = get_roof_shape(shape)
         face = roofShape.face
         self.init(len(face.verts))
@@ -26,8 +28,8 @@ class HipRoof(pro.op_hip_roof.HipRoof):
         roofShape.delete()
         # finalizing: if there is a rule for the shape, execute it
         for entry in manager.shapes:
-            context.pushState(shape=entry[0])
-            entry[1].execute()
-            context.popState()
+            ctx.pushState(shape=entry[0])
+            entry[1].execute(ctx)
+            ctx.popState()
         
         

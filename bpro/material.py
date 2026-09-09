@@ -74,7 +74,15 @@ class MaterialManager:
         """
         Creates a new material and calls self.setMaterial(...)
         """
-        engine = context.blenderContext.scene.render.engine
+        # Prefer MaterialContext backend (Phase 4); fall back to blenderContext.
+        engine = None
+        materials = getattr(context, "materials", None)
+        if materials is not None:
+            engine = materials.render_engine()
+        if not engine:
+            bc = getattr(context, "blenderContext", None)
+            if bc is not None and getattr(bc, "scene", None) is not None:
+                engine = bc.scene.render.engine
         renderer = self.engines.get(engine, self.defaultEngine)
         try:
             material = renderer.createMaterial(name, textures)

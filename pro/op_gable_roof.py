@@ -1,8 +1,9 @@
+from .rule_context import resolve_rule_context
 from .base import Operator, ComplexOperator, context, countOperator
 
 
 def gable_roof(*args, **kwargs):
-    return context.factory["GableRoof"](*args, **kwargs)
+    return resolve_rule_context().factory["GableRoof"](*args, **kwargs)
 
 
 class GableRoof(ComplexOperator):
