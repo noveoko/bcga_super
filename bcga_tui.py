@@ -80,28 +80,45 @@ def run_generation(blenderExe, ruleFile, outputPath, count=1, seed=None,
 
 def build_trace_tree(node, label=None):
     """
-    Converts a resolved building trace dict (from Rule.to_dict()) into a
-    rich.tree.Tree for pretty terminal display. Pure/no I/O, so it's
-    unit-testable against a plain dict.
+    Converts a generation record (Rule/Operator.to_dict(), optionally wrapped
+    in a bcga-trace envelope) into a rich.tree.Tree for terminal display.
+    Pure/no I/O, so it's unit-testable against a plain dict.
     """
     if not isinstance(node, dict):
         return Tree(str(node))
 
-    nodeType = node.get("type", "Node")
+    # Unwrap export envelope from bpro.apply(trace=True)
+    if node.get("format") == "bcga-trace" and "root" in node:
+        return build_trace_tree(node["root"], label=label)
+
+    nodeType = node.get("operator") or node.get("type") or "Node"
+    params = node.get("parameters") if isinstance(node.get("parameters"), dict) else {}
+
     if nodeType == "Rule":
         title = "[bold cyan]%s[/bold cyan]" % node.get("rule", "Rule")
-        if "value" in node:
+        valueCell = params.get("value")
+        if isinstance(valueCell, dict) and "resolved" in valueCell:
+            title += "  [dim]<- %s[/dim]" % valueCell["resolved"]
+        elif "value" in node:
             title += "  [dim]<- %s[/dim]" % node["value"]
     else:
         title = "[green]%s[/green]" % nodeType
-        # show a few interesting scalar attrs inline, skip noisy/nested ones
-        skipKeys = {"type", "children", "parts"}
         bits = []
-        for k, v in node.items():
-            if k in skipKeys:
-                continue
-            if isinstance(v, (int, float, str, bool)):
+        for k, v in params.items():
+            if isinstance(v, dict) and "resolved" in v and isinstance(
+                v["resolved"], (int, float, str, bool)
+            ):
+                bits.append("%s=%s" % (k, v["resolved"]))
+            elif isinstance(v, (int, float, str, bool)):
                 bits.append("%s=%s" % (k, v))
+        # Legacy flat-attr traces (pre-Priority 6)
+        if not bits:
+            skipKeys = {"type", "operator", "children", "parts", "parameters", "cases", "default"}
+            for k, v in node.items():
+                if k in skipKeys:
+                    continue
+                if isinstance(v, (int, float, str, bool)):
+                    bits.append("%s=%s" % (k, v))
         if bits:
             title += "  [dim](%s)[/dim]" % ", ".join(bits)
 
@@ -112,12 +129,17 @@ def build_trace_tree(node, label=None):
         child = tree
 
     for part in node.get("parts", []):
-        child.add(build_trace_tree(part))
+        # parts may be encode_value list cells [weight, op] or bare op records
+        if isinstance(part, dict) and part.get("kind") == "list":
+            items = part.get("items") or []
+            op = items[1] if len(items) > 1 else (items[0] if items else part)
+            child.add(build_trace_tree(op))
+        else:
+            child.add(build_trace_tree(part))
     for c in node.get("children", []):
         child.add(build_trace_tree(c))
 
     return tree
-
 
 def _select_rule_file(rulesDir):
     files = list_rule_files(rulesDir)

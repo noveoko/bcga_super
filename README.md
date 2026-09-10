@@ -51,7 +51,27 @@ Each **plot** is a 4-vertex rectangle; vertex 0→1 is the street edge, so the r
 blender --background --factory-startup --python generate.py -- --rule examples/polish_town_1927.py --output out/house.blend --width 10 --depth 12 --seed 1927
 ```
 
-`--count 4 --spacing 6` lays variants side by side. `--export-json trace.json` writes the resolved rule tree (`Rule.to_dict()`).
+`--count 4 --spacing 6` lays variants side by side. `--export-json trace.json` writes a `bcga-trace` generation record (authored random/choice/param sources plus resolved values; see `docs/CONTEXT.md` Priority 6).
+
+## Random city (one command)
+
+Layout + a pool of 20 building styles → one `.blend`:
+
+```powershell
+python run_random_city.py --output out/city.blend --seed 42
+```
+
+First run writes `examples/generated_rules/building_00.py` … `building_19.py` (reused later unless `--force-rules`). Each plot/block gets a random rule from that pool. Options: `--style polish`, `--blocks 40`, `--radius 150`, `--generate-water`, `--max-blocks 20` (preview), `--layout-only`.
+
+### Rule workshop (Streamlit)
+
+Paste/upload a DSL rule → Blender `.blend` + PNG preview; optionally save into the town rule pool:
+
+```powershell
+streamlit run streamlit_app/rule_workshop.py
+```
+
+See `streamlit_app/README.md`.
 
 ## Generic organic city
 
@@ -63,6 +83,18 @@ blender --background --factory-startup --python city_builder.py -- --layout out/
 ```
 
 `examples/city_building.py` reads density via `city_block()` inside `Begin()` (1 at center, 0 at the edge) and varies height / colour / roof. Prefer that over module-level `context.cityBlock` — see `docs/CONTEXT.md` (Phase 5).
+
+### Rivers, streams, creeks, lakes, ponds & watersheds
+
+`pro/city/water.py` adds water features to a layout. Any road that crosses a river/stream/creek/lake/pond gets automatically split, and the piece over the water is tagged `"bridge": True` so `city_builder.py` builds an actual elevated bridge (deck + piers + railings) there instead of a road running into the water.
+
+```powershell
+python pro/city/layout.py --output out/city.json --blocks 60 --radius 200 --seed 1 \
+    --generate-water --num-rivers 1 --num-lakes 1 --num-ponds 2
+blender --background --factory-startup --python city_builder.py -- --layout out/city.json --rule examples/city_building.py --output out/city.blend
+```
+
+`--num-streams` / `--num-creeks` / `--num-watersheds` add the other feature types (a watershed is a catchment boundary, not open water, so it doesn't get bridged by default). `--river-width` / `--stream-width` / `--creek-width` set bank-to-bank width in meters, and `--bridge-margin` controls how far a bridge extends past the water's edge. Pass `--skip-water` to `city_builder.py` to build the layout without water/bridge geometry even if the layout JSON has a `"water"` list.
 
 ## Blender addon
 

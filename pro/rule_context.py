@@ -10,6 +10,8 @@ from __future__ import annotations
 from contextvars import ContextVar
 from typing import Optional
 
+from .runtime.context import context
+
 _active_rule_context: ContextVar[Optional["RuleContext"]] = ContextVar(
     "bcga_rule_context", default=None
 )
@@ -66,7 +68,6 @@ def resolve_rule_context(explicit=None) -> RuleContext:
         return current
 
     # Fall back to the module-level context proxy (session-aware).
-    from .base import context
     target = context._target() if hasattr(context, "_target") else context
     return RuleContext(target)
 

@@ -1,12 +1,19 @@
 """Pure-Python tests for street-edge parceling."""
 import math
 
+import pytest
+
 from pro.city.parcels import parcel_block, _point_in_convex, _rects_overlap
 
 
 def _square(s=40.0):
     h = s / 2.0
     return [(-h, -h), (h, -h), (h, h), (-h, h)]
+
+
+def test_parcel_block_requires_explicit_rng():
+    with pytest.raises(ValueError, match="explicit rng"):
+        parcel_block(_square(40), density=0.5, rng=None)
 
 
 def test_plots_are_rectangles_inside_block():

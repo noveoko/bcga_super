@@ -3,9 +3,24 @@ Interior openings on 2-D wall segments.
 
 No bpy. Opening metadata lives on wall records from partition_polygon;
 openings() in bpro turns those into piers + a lintel without CSG.
+
+Geometry primitives come from pro.geom (not rooms) so there is no
+rooms ↔ openings import cycle.
 """
 from dataclasses import asdict, dataclass
 import math
+
+from .geom import (
+    _add,
+    _centroid,
+    _clip_half,
+    _dot,
+    _longest_edge_axis,
+    _mul,
+    _point_in_convex,
+    _span_along,
+    _valid_poly,
+)
 
 
 @dataclass
@@ -149,8 +164,6 @@ def place_centered_openings(
 
 
 def _wall_axis(wall):
-    from .rooms import _longest_edge_axis, _span_along, _centroid
-
     poly = wall["polygon"]
     _length, edgeDir, _mid = _longest_edge_axis(poly)
     perp = (-edgeDir[1], edgeDir[0])
@@ -164,8 +177,6 @@ def rooms_on_wall_sides(wall, rooms, probe=None):
     Sample along the wall and see which rooms sit on each long face.
     Returns (plus_ids, minus_ids).
     """
-    from .rooms import _add, _dot, _mul, _point_in_convex
-
     edgeDir, perp, lo, hi, c = _wall_axis(wall)
     thick = float(wall.get("thickness") or 0.12)
     if probe is None:
@@ -188,8 +199,6 @@ def rooms_on_wall_sides(wall, rooms, probe=None):
 
 
 def _overlap_on_wall(wall, room_a, room_b):
-    from .rooms import _span_along
-
     edgeDir, _perp, lo_w, hi_w, _c = _wall_axis(wall)
     lo_a, hi_a = _span_along(room_a["polygon"], edgeDir)
     lo_b, hi_b = _span_along(room_b["polygon"], edgeDir)
@@ -368,10 +377,6 @@ def slice_wall_polygon(poly, t0, t1):
     """
     Clip a wall polygon to the interval [t0, t1] meters along its longest edge.
     """
-    from .rooms import (
-        _add, _clip_half, _centroid, _dot, _longest_edge_axis, _mul, _span_along, _valid_poly,
-    )
-
     if t1 <= t0 + 1e-9:
         return []
     _length, edgeDir, _mid = _longest_edge_axis(poly)

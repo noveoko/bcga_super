@@ -6,12 +6,16 @@ def color(_color):
 
 class Color(Operator):
 	def __init__(self, _color):
-		if not isinstance(_color, (str, tuple, list)):
-			# _color is probably an instance of AttrColor, cast it to a string
-			_color = str(_color)
-		if isinstance(_color, str):
-			self.colorHex = _color
+		authored = _color
+		resolved = _color
+		if not isinstance(resolved, (str, tuple, list)):
+			# Choice/ParamColor/etc. — resolve to a hex string for execution
+			resolved = str(resolved)
+		if isinstance(resolved, str):
+			self.colorHex = resolved
 			# we've got a hex string, convert to the tuple
-			_color = tuple( map(lambda c: c/255, bytes.fromhex(_color[-6:])) )
-		self.color = _color
+			resolved = tuple( map(lambda c: c/255, bytes.fromhex(resolved[-6:])) )
+		else:
+			self.colorHex = None
+		self.bind_param("color", authored, resolve=lambda _a: resolved)
 		super().__init__()

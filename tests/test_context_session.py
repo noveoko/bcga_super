@@ -17,6 +17,12 @@ def test_context_exposes_random_and_trace_subcontexts():
     context.set_seed(42)
     assert context.seed == 42
     assert context.rng is context.random.rng
+    assert context.random.uniform(0.0, 1.0) == RandomContext(42).uniform(0.0, 1.0)
+    context.set_seed(42)
+    via_wrapper = context.random.choice(("a", "b"))
+    context.set_seed(42)
+    via_rng = context.rng.choice(("a", "b"))
+    assert via_wrapper == via_rng
     context.tracing = True
     assert context.trace.tracing is True
     context.buildingTrace = {"ok": 1}

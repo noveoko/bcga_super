@@ -45,6 +45,14 @@ class Switch(ComplexOperator):
 
     def execute(self, ctx=None):
         ctx = resolve_rule_context(ctx)
-        chosen = self.cases.get(self.switchValue, self.default)
+        keys = list(self.cases.keys())
+        if self.switchValue in self.cases:
+            selected = keys.index(self.switchValue)
+            chosen = self.cases[self.switchValue]
+        else:
+            selected = None
+            chosen = self.default
+        self.bind_param("switchValue", self.switchValue, resolve=None)
+        self.bind_param("selected", selected, resolve=None)
         if chosen is not None:
             call_execute(chosen, ctx)

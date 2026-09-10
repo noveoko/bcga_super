@@ -6,8 +6,8 @@ city_game.json sidecar and Blender door-leaf meshes.
 """
 import math
 
+from .geom import _add, _centroid, _dot, _longest_edge_axis, _mul, _span_along
 from .openings import opening_from
-from .rooms import _add, _centroid, _dot, _longest_edge_axis, _mul, _span_along
 
 
 def door_record(poly, z0, opening, kind="interior", plot_id=None, inward=None):

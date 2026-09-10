@@ -37,14 +37,17 @@ class Chance(ComplexOperator):
         total = sum(weights)
         if total <= 0:
             raise ValueError("chance() weights must sum to a positive number")
-        # Use BCGA's session RNG (ctx.rng), not the process-global random
+        # Use BCGA's session RandomContext, not the process-global random
         # module, so set_seed() controls chance() the same way as random()/choice().
-        r = ctx.rng.uniform(0, total)
+        r = ctx.random.uniform(0, total)
         upto = 0.0
-        chosen = self.parts[-1][1]
-        for w, op in self.parts:
+        selected = len(self.parts) - 1
+        chosen = self.parts[selected][1]
+        for i, (w, op) in enumerate(self.parts):
             upto += w
             if r <= upto:
+                selected = i
                 chosen = op
                 break
+        self.bind_param("selected", selected, resolve=None)
         call_execute(chosen, ctx)

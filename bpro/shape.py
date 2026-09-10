@@ -3,6 +3,8 @@ from pro import context
 from pro import x, y
 from pro import front, back, left, right, top, bottom, side, all
 from pro.op_split import calculateSplit
+from pro.rule_context import resolve_rule_context
+from .op_delete import Delete
 from .util import rotation_zNormal_xHorizontal, getEndVertex, unityThreshold, zAxis
 
 # normal threshold for the Shape3d.comp method to classify if the face is horizontal or vertical
@@ -11,7 +13,6 @@ horizontalFaceThreshold = 0.70711 # math.sqrt(0.5)
 
 def _geometry_api():
     """Active GeometryBackend, or None if not attached yet."""
-    from pro.rule_context import resolve_rule_context
     try:
         return resolve_rule_context().geometry.api
     except RuntimeError:
@@ -480,7 +481,6 @@ class Rectangle(Shape2d):
         return (width, height)
     
     def extrude2(self, parts, defs):
-        from .op_delete import Delete
         materialManager = context.materialManager
         def inheritMaterial(shape, loop1, loop2, bm):
             """A helper function for material inheritance"""

@@ -66,7 +66,8 @@ def apply(ruleFile, startRule="Begin", trace=False, session=None):
         trace (bool): when True, a full resolved JSON-serializable trace of
             everything the rule tree actually did for this specific
             generated building is made available afterwards as
-            context.buildingTrace (a dict; see pro.base.Rule.to_dict()).
+            context.buildingTrace (a bcga-trace envelope around Rule.to_dict();
+            see docs/CONTEXT.md Priority 6).
             Does not change this function's return value, so existing
             callers doing `module, params = bpro.apply(...)` keep working
             unchanged. False by default: zero extra overhead when unused.
@@ -165,7 +166,15 @@ def _apply_inner(ruleFile, startRule="Begin", trace=False):
         context.tracing = bool(trace)
         rootRule = getattr(module, startRule)()
         rootRule.execute()
-        context.buildingTrace = rootRule.to_dict() if trace else None
+        if trace:
+            from pro.serialization.trace import wrap_trace
+            context.buildingTrace = wrap_trace(
+                rootRule.to_dict(),
+                seed=context.seed,
+                rule=getattr(context, "ruleFile", None),
+            )
+        else:
+            context.buildingTrace = None
 
         # remove unused faces from context.facesForRemoval
         bmesh.ops.delete(bm, geom=context.facesForRemoval, context='FACES')

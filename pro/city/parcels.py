@@ -169,7 +169,10 @@ def parcel_block(
         before: plots are placed flush with the block edge.
     """
     if rng is None:
-        rng = randomlib.Random()
+        raise ValueError(
+            "parcel_block requires an explicit rng (e.g. random.Random(seed)); "
+            "refusing an unseeded process fallback so parcelization stays reproducible"
+        )
     if len(polygon) < 3:
         return []
 

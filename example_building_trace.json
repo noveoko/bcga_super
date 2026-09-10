@@ -1,0 +1,98 @@
+{
+  "format": "bcga-trace",
+  "version": 1,
+  "seed": null,
+  "rule": "examples/demo.py",
+  "root": {
+    "operator": "Rule",
+    "rule": "Begin",
+    "parameters": {},
+    "children": [
+      {
+        "operator": "Extrude",
+        "parameters": {
+          "depth": {
+            "kind": "literal",
+            "resolved": 6.0
+          },
+          "interior": {
+            "kind": "literal",
+            "resolved": false
+          },
+          "inheritMaterialAll": {
+            "kind": "literal",
+            "resolved": true
+          },
+          "inheritMaterialSide": {
+            "kind": "literal",
+            "resolved": false
+          },
+          "inheritMaterialExtruded": {
+            "kind": "literal",
+            "resolved": false
+          },
+          "keepOriginal": {
+            "kind": "literal",
+            "resolved": false
+          },
+          "alwaysAlongOriginal": {
+            "kind": "literal",
+            "resolved": false
+          }
+        },
+        "parts": [
+          {
+            "operator": "Rule",
+            "rule": "FrontWall",
+            "parameters": {
+              "value": {
+                "kind": "literal",
+                "resolved": "front"
+              }
+            },
+            "children": [
+              {
+                "operator": "Color",
+                "parameters": {
+                  "color": {
+                    "kind": "literal",
+                    "resolved": [0.2, 0.4, 0.6]
+                  },
+                  "colorHex": {
+                    "kind": "literal",
+                    "resolved": "#336699"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "operator": "Rule",
+            "rule": "Roof",
+            "parameters": {
+              "value": {
+                "kind": "literal",
+                "resolved": "top"
+              }
+            },
+            "children": [
+              {
+                "operator": "Color",
+                "parameters": {
+                  "color": {
+                    "kind": "literal",
+                    "resolved": [0.6666666666666666, 0.2, 0.2]
+                  },
+                  "colorHex": {
+                    "kind": "literal",
+                    "resolved": "#aa3333"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

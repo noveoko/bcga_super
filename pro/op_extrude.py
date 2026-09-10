@@ -35,8 +35,8 @@ class Extrude(ComplexOperator):
 		# apply kwargs
 		for k in kwargs:
 			setattr(self, k, kwargs[k])
-		# depth may be an instance of ParamFloat, so cast it to float
-		self.depth = float(depth)
+		# Keep authored depth (Random/Param/…) for generation records; store float for execution
+		self.bind_param("depth", depth, resolve=float)
 		# count operators
 		numOperators = 0
 		for part in parts:

@@ -72,9 +72,11 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--export-json",
-        help="Also write a resolved JSON description of the generated "
+        help="Also write a bcga-trace generation record for the generated "
              "building(s) to this path (a single object for --count 1, "
-             "a JSON array for --count > 1). See pro.base.Rule.to_dict().",
+             "a JSON array for --count > 1). Records distinguish authored "
+             "random/choice/param sources from resolved values "
+             "(see docs/CONTEXT.md Priority 6).",
     )
     return parser.parse_args(argv)
 

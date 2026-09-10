@@ -9,8 +9,14 @@ Street edge of the footprint is vertices 0→1, so `front` is the street façade
 Note (Phase 5): this file still binds plot fields at import time because
 massing constants depend on them. New rules should prefer city_block()
 inside Begin() — see examples/city_building.py and docs/CONTEXT.md.
+
+Priority 5: roof pitch/overhang/fascia use session-seeded `random()` via
+`param(...)` (controlled by GenerationSession / --seed). Import-time
+basement access still needs a concrete string before prepare(), so it uses
+an explicit local Random(1927+plot_id) — never the process-global `random`
+module.
 """
-import random as pyrandom
+from random import Random as _PlotRandom
 
 from pro import *
 
@@ -23,7 +29,7 @@ _plot = context.cityBlock or {
     "wall": "plaster", "frontage": "house", "storeys": 2,
     "width": 10.0, "depth": 12.0,
 }
-pyrandom.seed(1927 + int(_plot.get("id", 0)))
+_plot_rng = _PlotRandom(1927 + int(_plot.get("id", 0)))
 
 role = _plot.get("role") or "kamienica"
 roof_kind = _plot.get("roof") or "hip"
@@ -76,7 +82,7 @@ elif role in ("church", "synagogue", "school", "ratusz"):
 elif role == "workshop" or storeys < 2:
     BASEMENT_ACCESS = "ladder"
 else:
-    BASEMENT_ACCESS = "ladder" if pyrandom.random() < 0.22 else "stairs"
+    BASEMENT_ACCESS = "ladder" if _plot_rng.random() < 0.22 else "stairs"
 
 if role == "apteka":
     # Cream plaster with a hint of pharmacy green in the mix
@@ -100,30 +106,30 @@ else:
 
 if role == "church":
     ROOF_COLOR = param(choice("#4f5a48", "#5a4638"), group="Roof")
-    ROOF_PITCH = param(round(pyrandom.uniform(48, 54), 1), group="Roof")
+    ROOF_PITCH = param(random(48, 54), group="Roof")
     # stone/plaster cornice churches carried a shallower eave than timber outbuildings
-    ROOF_OVERHANG = param(round(pyrandom.uniform(0.30, 0.45), 2), group="Roof")
+    ROOF_OVERHANG = param(random(0.30, 0.45), group="Roof")
 elif role == "barn":
     ROOF_COLOR = param(choice("#6b3d32", "#7a4a32"), group="Roof")
-    ROOF_PITCH = param(round(pyrandom.uniform(36, 44), 1), group="Roof")
+    ROOF_PITCH = param(random(36, 44), group="Roof")
     # barns/outbuildings favored the deepest eaves, to keep rain off stacked hay/wood
-    ROOF_OVERHANG = param(round(pyrandom.uniform(0.50, 0.75), 2), group="Roof")
+    ROOF_OVERHANG = param(random(0.50, 0.75), group="Roof")
 elif role == "karczma":
     ROOF_COLOR = param(choice("#5a3a28", "#6b4230", "#4a3020"), group="Roof")
-    ROOF_PITCH = param(round(pyrandom.uniform(38, 46), 1), group="Roof")
-    ROOF_OVERHANG = param(round(pyrandom.uniform(0.45, 0.65), 2), group="Roof")
+    ROOF_PITCH = param(random(38, 46), group="Roof")
+    ROOF_OVERHANG = param(random(0.45, 0.65), group="Roof")
 elif role == "school":
     ROOF_COLOR = param(choice("#9c3b28", "#a34430", "#8a3828"), group="Roof")
-    ROOF_PITCH = param(round(pyrandom.uniform(36, 42), 1), group="Roof")
-    ROOF_OVERHANG = param(round(pyrandom.uniform(0.40, 0.55), 2), group="Roof")
+    ROOF_PITCH = param(random(36, 42), group="Roof")
+    ROOF_OVERHANG = param(random(0.40, 0.55), group="Roof")
 else:
     ROOF_COLOR = param(choice("#b5523a", "#9c3b28", "#c45c3e", "#a34430"), group="Roof")
-    ROOF_PITCH = param(round(pyrandom.uniform(34, 44), 1), group="Roof")
+    ROOF_PITCH = param(random(34, 44), group="Roof")
     # typical 1890-1935 kamienica/cottage rafter-tail overhang
-    ROOF_OVERHANG = param(round(pyrandom.uniform(0.40, 0.60), 2), group="Roof")
+    ROOF_OVERHANG = param(random(0.40, 0.60), group="Roof")
 
 # depth of the painted barge/fascia board hung off the rafter tails
-FASCIA_DEPTH = param(round(pyrandom.uniform(0.12, 0.18), 2), group="Roof")
+FASCIA_DEPTH = param(random(0.12, 0.18), group="Roof")
 SOFFIT_COLOR = param(choice("#e4ddce", "#d8cfbc", "#c9c0aa"), group="Roof")  # painted underside boards
 FASCIA_COLOR = param(choice("#5c4030", "#4a3224", "#6e4a30"), group="Roof")  # painted barge board, usually dark wood
 
@@ -533,9 +539,9 @@ def PitchedRoof():
     # negative inset (pushes the roof edge outward past the wall by
     # ROOF_OVERHANG before the pitch starts), fascia>>() adds the vertical
     # board hanging off the rafter tails.
-    pitch = float(ROOF_PITCH)
-    overhang = float(ROOF_OVERHANG)
-    fasciaDepth = float(FASCIA_DEPTH)
+    pitch = round(float(ROOF_PITCH), 1)
+    overhang = round(float(ROOF_OVERHANG), 2)
+    fasciaDepth = round(float(FASCIA_DEPTH), 2)
     if roof_kind == "gable":
         gable_roof(
             pitch, overhang,

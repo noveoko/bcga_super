@@ -1,13 +1,13 @@
 """Pure-Python tests for floorplate room partitioning."""
 import math
 
-from pro.rooms import (
-    partition_polygon,
+from pro.geom import (
+    _clip_polygon,
+    _inset_convex,
     _point_in_convex,
     _polygon_area,
-    _inset_convex,
-    _clip_polygon,
 )
+from pro.rooms import partition_polygon
 
 
 def _rect(w=10.0, d=12.0, origin=(0.0, 0.0)):

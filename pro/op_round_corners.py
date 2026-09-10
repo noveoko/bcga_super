@@ -8,6 +8,6 @@ def round_corners(radius=0.4, segments=3, **kwargs):
 
 class RoundCorners(ComplexOperator):
     def __init__(self, radius=0.4, segments=3, **kwargs):
-        self.radius = float(radius)
-        self.segments = int(segments)
+        self.bind_param("radius", radius, resolve=float)
+        self.bind_param("segments", segments, resolve=int)
         super().__init__(0)

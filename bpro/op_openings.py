@@ -1,6 +1,8 @@
 from pro import context
-from pro.rule_context import resolve_rule_context
+from pro.doors import door_record
+from pro.geom import _centroid, _longest_edge_axis, _norm, _sub
 from pro.openings import decompose_spans, opening_from, slice_wall_polygon
+from pro.rule_context import resolve_rule_context
 
 from .op_partition import _shape_from_poly, _shape_xy
 from .shape import Shape2d
@@ -37,7 +39,6 @@ class Openings(pro.op_openings.Openings):
             return
 
         poly, z0 = _shape_xy(shape)
-        from pro.rooms import _longest_edge_axis
         length, _edgeDir, _mid = _longest_edge_axis(poly)
         spans = decompose_spans(length, openings, min_pier=self.min_pier)
         if not any(s["kind"] == "gap" for s in spans):
@@ -70,8 +71,6 @@ class Openings(pro.op_openings.Openings):
                 _extrude(band, sill)
 
         # Game-export door leaves: one record per gap
-        from pro.doors import door_record
-        from pro.rooms import _centroid, _sub, _norm
         plot = getattr(context, "cityBlock", None) or {}
         plot_id = plot.get("id") if isinstance(plot, dict) else None
         kind = getattr(shape, "door_kind", None) or "interior"

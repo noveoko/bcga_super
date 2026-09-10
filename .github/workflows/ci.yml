@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          # Core tests are bpy-free; Streamlit/Gemini extras are optional here.
+          if [ -f streamlit_app/requirements.txt ]; then
+            pip install -r streamlit_app/requirements.txt || true
+          fi
+
+      - name: Load secrets from Kryptic
+        env:
+          KRYPTIC_CLIENT_ID: ${{ secrets.KRYPTIC_CLIENT_ID }}
+          KRYPTIC_CLIENT_SECRET: ${{ secrets.KRYPTIC_CLIENT_SECRET }}
+        run: |
+          # Skip gracefully if machine-identity secrets are not configured yet.
+          if [ -z "$KRYPTIC_CLIENT_ID" ] || [ -z "$KRYPTIC_CLIENT_SECRET" ]; then
+            echo "Kryptic machine identity not set; continuing without vault secrets."
+            exit 0
+          fi
+          ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+          curl -fsSL "https://kryptic.dev/dl/kryptic-linux-${ARCH}" -o /tmp/kryptic
+          chmod +x /tmp/kryptic
+          eval "$(/tmp/kryptic ci export --project proj_c2c4ecfa09b8 --env development --format shell)"
+          # Secrets (e.g. GEMINI_API_KEY) are available only in this step.
+          # Put any secret-dependent smoke tests below this line.
+          echo "Kryptic export ok; GEMINI_API_KEY is ${GEMINI_API_KEY:+set}"
+
+      - name: Run tests
+        run: python -m pytest tests -q

@@ -30,9 +30,9 @@ class GableRoof(ComplexOperator):
             else:
                 numeric.append(arg)
         if numeric:
-            self.pitch = float(numeric[0])
+            self.bind_param("pitch", numeric[0], resolve=float)
         if len(numeric) > 1:
-            self.soffitSize = float(numeric[1])
+            self.bind_param("soffitSize", numeric[1], resolve=float)
         for k in ("face", "soffit", "fascia"):
             if k in kwargs:
                 setattr(self, k, kwargs[k])

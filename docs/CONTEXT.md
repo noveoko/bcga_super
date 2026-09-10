@@ -41,6 +41,121 @@ with GenerationSession(seed=12345, blender_context=bpy.context) as session:
 Operator **factory** is a process-wide shared dict (`_OPERATOR_FACTORY`) so every
 session resolves the same DSL operators.
 
+## Module layout (Priority 4)
+
+`pro.base` remains the **stable import path** (`from pro.base import Operator`,
+`from .base import context`, …). Implementations are split under:
+
+| Package | Contents |
+|---|---|
+| `pro.runtime` | `Context`, `ContextProxy`, `RandomContext`, `TraceContext`, `State`, `shape`, `_OPERATOR_FACTORY` |
+| `pro.dsl` | `Modifier`, `Operator`, `ComplexOperator`, `Rule`, `countOperator`, … |
+| `pro.params` | `Param` / `ParamFloat` / `ParamColor`, `Random`, `Choice`, factories |
+| `pro.serialization` | `_serialize_value`, `to_json` (encode helpers; `TraceContext` stays in runtime) |
+
+`RandomContext` and `TraceContext` live in `pro/runtime/context.py` because they
+are session/apply state composed by `Context`, not serialization encode logic.
+
+## Explicit RNG (Priority 5)
+
+Building DSL randomness goes through the session `RandomContext`, not Python's
+process-global `random` module:
+
+```python
+context.set_seed(123)
+# or: GenerationSession(seed=123) / generate.py --seed 123 / city_builder.py --seed 123
+
+x = random(2.0, 5.0)          # → Random; resolves via context.random
+c = choice("brick", "stone")  # → Choice; same stream
+chance((0.7, A()), (0.3, B()))  # shares the same stream
+```
+
+`RandomContext` exposes `uniform` / `choice` / `choices` / `random` (and still
+owns the underlying `context.rng` stdlib instance). Rule authors should use
+`random()` / `choice()` / `chance()` from `pro` — never `import random` for
+geometry variation.
+
+For tests, inject an RNG without touching the ambient session:
+
+```python
+from random import Random
+Random(0.0, 1.0).getValue(rng=Random(0))
+Choice("a", "b").getValue(rng=context.random)
+```
+
+City layout JSON now records `"seed"` from `generate_city_layout`. When
+`city_builder.py --seed` is omitted, the session falls back to that layout seed.
+
+## Generation records (Priority 6)
+
+With `bpro.apply(..., trace=True)` / `generate.py --export-json`, the building
+trace is a **generation record** that distinguishes authored stochastic sources
+from the values resolved for that building:
+
+```json
+{
+  "format": "bcga-trace",
+  "version": 1,
+  "seed": 123,
+  "rule": "examples/house.py",
+  "root": {
+    "operator": "Extrude",
+    "parameters": {
+      "depth": { "kind": "random", "range": [2.8, 3.6], "resolved": 3.21 }
+    },
+    "children": []
+  }
+}
+```
+
+Value cells use `kind`: `literal` | `random` | `choice` | `param` | `modifier` |
+`list` | `map`. Operators expose `operator` + `parameters` (+ optional `parts` /
+`children`). `chance` / `switch` record a `selected` index.
+
+Authored fidelity requires passing `random()` / `choice()` / `param(...)` into
+operators without pre-resolving in the rule file:
+
+```python
+extrude(random(2.8, 3.6))          # range kept in the trace
+extrude(float(random(2.8, 3.6)))   # range already lost
+```
+
+`Operator.to_dict()` / `Rule.to_dict()` return the record; `bpro` wraps it with
+`format` / `version` / `seed` / `rule`. **Replay** (`trace → building` without
+re-rolling RNG) is intentionally not implemented yet — records are the schema
+foundation for that future feature.
+
+## Pure 2D geometry layer (Priority 9)
+
+`pro.geom` holds bpy-free vector/polygon helpers (`_add`, `_centroid`,
+`_longest_edge_axis`, clip/inset, …). It imports **nothing** from rooms,
+openings, or operators.
+
+- `pro.openings` and `pro.doors` depend on `pro.geom` (top-level imports).
+- `pro.rooms` is the partition algorithm; it may import `openings` at top level
+  for the optional `door_width=` post-pass.
+- `pro.geometry` (singular module) remains **GeometryContext** for the 3D apply
+  path — do not confuse it with `pro.geom`.
+
+**Lazy-import policy:** in-function imports are allowed only for (1) proven
+load cycles with a documented edge (e.g. `ContextProxy` ↔ `session`,
+`encode_value` ↔ dsl types), (2) optional heavy deps (`bpro`, `networkx`,
+`rasterio`), or (3) `__main__`. Prefer fixing dependency direction over hiding
+imports.
+
+## Strict serialization (Priority 7)
+
+`encode_value` never falls back to `str(v)`. Unsupported types raise
+`SerializationError` so traces cannot silently contain
+`"<Foo object at 0x…>"`.
+
+To put a new type in a generation record, either:
+
+1. Add an `encode_value` branch, or
+2. Implement `to_dict()` (duck-typed / `Serializable` protocol), or
+3. Exclude the attribute: private `_*` names are skipped, and classes may set
+   `_TRACE_SKIP = frozenset({"attr", ...})`.
+
 ## Geometry / Material backends (Phase 4)
 
 `bpro.backends.attach_blender_backends(ctx, mesh)` attaches:

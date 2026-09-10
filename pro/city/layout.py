@@ -31,6 +31,11 @@ try:
 except ImportError:  # python pro/city/layout.py (script, not package)
     from terrain import load_terrain
 
+try:
+    from .water import generate_water_bodies, insert_bridges
+except ImportError:  # python pro/city/layout.py (script, not package)
+    from water import generate_water_bodies, insert_bridges
+
 
 # Real-world paved width (meters) per road hierarchy value, mirroring the
 # defaults city_builder.py's build_roads() draws ribbons at
@@ -512,6 +517,18 @@ def generate_city_layout(
     road_classification="distance",
     block_method="voronoi",
     target_block_length=140.0,
+    water_bodies=None,
+    generate_water=False,
+    num_rivers=0,
+    num_streams=0,
+    num_creeks=0,
+    num_lakes=0,
+    num_ponds=0,
+    num_watersheds=0,
+    river_width=6.0,
+    stream_width=2.5,
+    creek_width=1.2,
+    bridge_margin=1.5,
 ):
     """
     Generates an organic city layout.
@@ -552,6 +569,32 @@ def generate_city_layout(
             "roads" as local streets.
         target_block_length: only used when block_method="subdivision";
             the longest allowed block edge in meters before it gets cut.
+        water_bodies: optional list of pre-built water features (see
+            pro/city/water.py's module docstring for the schema -- rivers/
+            streams/creeks as {"path": [...], "width": ...}, lakes/ponds/
+            watersheds as {"polygon": [...]}). Used as-is, in addition to
+            anything generate_water procedurally adds.
+        generate_water: if True, procedurally scatters
+            num_rivers/num_streams/num_creeks/num_lakes/num_ponds/
+            num_watersheds water features inside the city disk (see
+            water.generate_water_bodies), reusing this call's terrain
+            model (if any -- from dem_path or max_slope) so rivers can
+            bend toward lower ground.
+        num_rivers, num_streams, num_creeks: how many of each linear
+            water feature to generate (only used when generate_water=True).
+        num_lakes, num_ponds, num_watersheds: how many of each areal
+            water feature to generate (only used when generate_water=True).
+            Watersheds default to requires_bridge=False (a catchment
+            boundary, not necessarily open water).
+        river_width, stream_width, creek_width: bank-to-bank width in
+            meters for procedurally generated linear features.
+        bridge_margin: meters a generated bridge extends past the water's
+            edge on each side (see water.insert_bridges).
+
+    Any road segment that crosses a water feature (from water_bodies
+    and/or generate_water) is split, and the piece spanning the water is
+    tagged "bridge": True -- see water.insert_bridges for the full
+    schema of a bridge segment.
 
     Returns a JSON-serializable dict:
         {
@@ -565,7 +608,16 @@ def generate_city_layout(
             "roads": [
                 {"start": [x,y], "end": [x,y], "hierarchy": "primary"|"secondary"},
                 # ("arterial"|"collector"|"local" instead, if
-                # road_classification="functional")
+                # road_classification="functional"); a road segment
+                # crossing water instead looks like:
+                # {"start": [...], "end": [...], "hierarchy": ...,
+                #  "bridge": True, "bridge_id": int, "bridge_length": float,
+                #  "water_feature_id": int, "water_feature_type": str}
+                ...
+            ],
+            "water": [
+                # see pro/city/water.py's module docstring for the full
+                # per-feature schema (linear vs areal)
                 ...
             ],
         }
@@ -671,8 +723,26 @@ def generate_city_layout(
     if road_classification == "functional":
         roads = _classify_roads_functional(roads, terrain)
 
+    water = list(water_bodies) if water_bodies else []
+    if generate_water:
+        water = water + generate_water_bodies(
+            rng, radius, terrain=terrain,
+            num_rivers=num_rivers, num_streams=num_streams, num_creeks=num_creeks,
+            num_lakes=num_lakes, num_ponds=num_ponds, num_watersheds=num_watersheds,
+            river_width=river_width, stream_width=stream_width, creek_width=creek_width,
+        )
+    if water:
+        roads = insert_bridges(roads, water, margin=bridge_margin)
+
     _assign_town_roles(blocks, terrain)
-    return {"center": [0, 0], "radius": radius, "blocks": blocks, "roads": roads}
+    return {
+        "center": [0, 0],
+        "radius": radius,
+        "seed": seed,
+        "blocks": blocks,
+        "roads": roads,
+        "water": water,
+    }
 
 
 def _assign_town_roles(blocks, terrain=None):
@@ -990,13 +1060,23 @@ def generate_polish_town_layout(
 
     # cobbled ring around the square
     corners = [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)]
+    rynekRoads = []
     for i in range(4):
         a, b = corners[i], corners[(i + 1) % 4]
-        layout["roads"].append({
+        rynekRoads.append({
             "start": [round(a[0], 4), round(a[1], 4)],
             "end": [round(b[0], 4), round(b[1], 4)],
             "hierarchy": "primary",
         })
+    if layout.get("water"):
+        # the rynek ring is added after generate_city_layout already ran
+        # insert_bridges once, so bridge these new edges separately
+        # instead of re-running it over the whole (already-bridged) road
+        # list.
+        rynekRoads = insert_bridges(
+            rynekRoads, layout["water"], margin=kwargs.get("bridge_margin", 1.5)
+        )
+    layout["roads"].extend(rynekRoads)
 
     road_widths = {
         "primary": road_width_primary, "arterial": road_width_primary,
@@ -1071,7 +1151,29 @@ if __name__ == "__main__":
     parser.add_argument("--sidewalk-gap", type=float, default=DEFAULT_SIDEWALK_GAP,
                         help="polish style only: extra buffer beyond half the road width between "
                              "the road edge and the front wall of a house")
+    parser.add_argument("--generate-water", action="store_true",
+                        help="procedurally scatter rivers/streams/creeks/lakes/ponds/watersheds "
+                             "and bridge any road that crosses them (see --num-* flags below)")
+    parser.add_argument("--num-rivers", type=int, default=0)
+    parser.add_argument("--num-streams", type=int, default=0)
+    parser.add_argument("--num-creeks", type=int, default=0)
+    parser.add_argument("--num-lakes", type=int, default=0)
+    parser.add_argument("--num-ponds", type=int, default=0)
+    parser.add_argument("--num-watersheds", type=int, default=0)
+    parser.add_argument("--river-width", type=float, default=6.0)
+    parser.add_argument("--stream-width", type=float, default=2.5)
+    parser.add_argument("--creek-width", type=float, default=1.2)
+    parser.add_argument("--bridge-margin", type=float, default=1.5,
+                        help="meters a bridge extends past the water's edge on each side")
     args = parser.parse_args()
+
+    water_kwargs = dict(
+        generate_water=args.generate_water,
+        num_rivers=args.num_rivers, num_streams=args.num_streams, num_creeks=args.num_creeks,
+        num_lakes=args.num_lakes, num_ponds=args.num_ponds, num_watersheds=args.num_watersheds,
+        river_width=args.river_width, stream_width=args.stream_width, creek_width=args.creek_width,
+        bridge_margin=args.bridge_margin,
+    )
 
     if args.style == "polish":
         layout = generate_polish_town_layout(
@@ -1085,6 +1187,7 @@ if __name__ == "__main__":
             road_width_secondary=args.road_width_secondary,
             road_width_local=args.road_width_local,
             sidewalk_gap=args.sidewalk_gap,
+            **water_kwargs
         )
     else:
         layout = generate_city_layout(
@@ -1093,10 +1196,17 @@ if __name__ == "__main__":
             dem_path=args.dem, dem_origin=(args.dem_origin_x, args.dem_origin_y),
             max_slope=args.max_slope, road_classification=args.road_classification,
             block_method=args.block_method, target_block_length=args.target_block_length,
+            **water_kwargs
         )
     save_city_layout(layout, args.output)
     extra = ""
     if layout.get("plots"):
         extra = " / %d plots" % len(layout["plots"])
-    print("Wrote %d blocks%s and %d road segments to %s" % (
-        len(layout["blocks"]), extra, len(layout["roads"]), args.output))
+    numBridges = sum(1 for r in layout["roads"] if r.get("bridge"))
+    waterExtra = ""
+    if layout.get("water"):
+        waterExtra = " / %d water feature(s) / %d bridge segment(s)" % (
+            len(layout["water"]), numBridges
+        )
+    print("Wrote %d blocks%s and %d road segments%s to %s" % (
+        len(layout["blocks"]), extra, len(layout["roads"]), waterExtra, args.output))

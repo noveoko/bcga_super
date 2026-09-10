@@ -3,8 +3,6 @@ Tests for the new DSL richness/variety primitives: chance() (stochastic
 rule selection), choice() (discrete random value), switch() (conditional
 branching). All bpy-free.
 """
-import random as randomlib
-
 import pro
 from pro.base import context, param, choice
 from pro.op_chance import Chance
@@ -43,7 +41,7 @@ def test_choice_is_resolved_once_and_stable():
 
 
 def test_choice_distribution_covers_all_options():
-    randomlib.seed(42)
+    context.set_seed(42)
     seen = set()
     for _ in range(200):
         seen.add(choice("a", "b", "c").getValue())
@@ -51,7 +49,7 @@ def test_choice_distribution_covers_all_options():
 
 
 def test_choice_respects_weights_statistically():
-    randomlib.seed(1)
+    context.set_seed(1)
     results = [choice("rare", "common", weights=[0.02, 0.98]).getValue() for _ in range(500)]
     common_fraction = results.count("common") / len(results)
     assert common_fraction > 0.9  # should be close to 0.98, generous margin for randomness
@@ -101,6 +99,22 @@ def test_param_color_choice_resolved_once():
         assert p.getValue() == first
 
 
+def test_prepare_accepts_param_color_without_random_attr():
+    """bpro.getParams() puts ParamColor in context.params; prepare must not assume .random."""
+    from pro.base import ParamColor, ParamFloat, random
+    context.init()
+    context.set_seed(1)
+    color_p = param(choice("#ff0000", "#00ff00"), group="Colors")
+    float_p = param(random(1.0, 2.0))
+    assert isinstance(color_p, ParamColor)
+    assert isinstance(float_p, ParamFloat)
+    # Simulate apply() replacing params with the module scan list (includes ParamColor).
+    context.params = [color_p, float_p]
+    context.prepare()  # must not raise AttributeError
+    assert color_p.value in ("#ff0000", "#00ff00")
+    assert float_p.value is not None
+
+
 # -- chance() -------------------------------------------------------------
 
 def test_chance_executes_exactly_one_option():
@@ -114,7 +128,7 @@ def test_chance_executes_exactly_one_option():
 
 def test_chance_zero_weight_option_never_picked():
     _with_context()
-    randomlib.seed(0)
+    context.set_seed(0)
     never, always = _Recorder("never"), _Recorder("always")
     for _ in range(50):
         never.executed = always.executed = False
@@ -125,7 +139,7 @@ def test_chance_zero_weight_option_never_picked():
 
 def test_chance_distribution_roughly_matches_weights():
     _with_context()
-    randomlib.seed(3)
+    context.set_seed(3)
     a, b = _Recorder("a"), _Recorder("b")
     countA = 0
     for _ in range(500):

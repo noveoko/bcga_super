@@ -1,4 +1,21 @@
-# Aerial photo -> BCGA rule file
+# Streamlit apps
+
+## Rule workshop (DSL → Blender preview)
+
+Paste or upload a BCGA rule file, build a `.blend`, render a PNG preview, and
+optionally save the rule into `examples/generated_rules/` for
+`run_random_city.py`.
+
+```bash
+pip install -r streamlit_app/requirements.txt
+# Blender on PATH, or: set BLENDER_EXECUTABLE=...
+streamlit run streamlit_app/rule_workshop.py
+```
+
+No Gemini key required. Saved rules become `building_20.py`, `building_21.py`, …
+(so regenerating presets 00–19 with `--force-rules` does not wipe them).
+
+## Aerial photo -> BCGA rule file
 
 A Streamlit front end for turning a photo of one building into a runnable
 BCGA rule (`.py`) file: upload, crop to the building, trace its approximate
@@ -16,12 +33,28 @@ someone can actually run," nothing more yet.
 
 ```bash
 pip install -r streamlit_app/requirements.txt
-export GEMINI_API_KEY=...   # https://aistudio.google.com/apikey
 streamlit run streamlit_app/app.py
 ```
 
-(The API key can also be pasted into the sidebar for just that session
-instead of being set as an environment variable.)
+### Gemini API key via Kryptic (recommended)
+
+This repo already has `kryptic.json` (`proj_c2c4ecfa09b8` / `development`).
+
+1. Install the [Kryptic daemon](https://kryptic.dev/download) and run `kryptic login`.
+2. In the [dashboard](https://app.kryptic.dev), open this project → **development** → add secret **`GEMINI_API_KEY`** (value from [Google AI Studio](https://aistudio.google.com/apikey)).
+3. From the repo root: `streamlit run streamlit_app/app.py` — `kryptic.inject()` loads the key into `os.environ` automatically.
+
+Fallbacks: set `GEMINI_API_KEY` in your shell, or paste into the sidebar for one session.
+
+### CI
+
+`.github/workflows/ci.yml` can export vault secrets with a machine identity:
+
+1. Create a machine identity in the Kryptic dashboard and copy the client id/secret.
+2. Add GitHub repo secrets `KRYPTIC_CLIENT_ID` and `KRYPTIC_CLIENT_SECRET`.
+3. The workflow runs `kryptic ci export --project proj_c2c4ecfa09b8 --env development` before any secret-dependent steps.
+
+Pytest itself does not need Gemini; the export step is ready when you add smoke tests that call the API.
 
 ## What it does
 
@@ -43,11 +76,13 @@ instead of being set as an environment variable.)
    before you see it (see below) — if it fails, the app automatically sends
    the model its own broken output plus the exact problems found and asks
    for a fix, up to the configured number of repair attempts.
-5. **Download** the resulting `rule.py` and run it, e.g.:
-   ```bash
-   blender --background --factory-startup --python generate.py -- \
-       --rule rule.py --output out/building.blend
-   ```
+5. **Download** the resulting `rule.py`, then use **Build & preview in Blender**
+   in the same page (needs Blender on PATH / `BLENDER_EXECUTABLE`) to produce a
+   `.blend` + PNG. You can also **Save rule to town library** for
+   `run_random_city.py`.
+
+   Paste-only DSL → Blender (no photo/Gemini):  
+   `streamlit run streamlit_app/rule_workshop.py`
 
 ## Why validation matters here
 

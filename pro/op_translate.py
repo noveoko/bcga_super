@@ -7,5 +7,6 @@ def translate(dx, dy, dz):
 
 class Translate(Operator):
     def __init__(self, vec):
-        self.vec = vec
+        # Remember authored components (may include Random/Param) for traces
+        self.bind_param("vec", vec, resolve=None)
         super().__init__()

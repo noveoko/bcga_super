@@ -48,6 +48,13 @@ def parse_args(argv=None):
                         help="Shrink each building footprint toward its centroid (meters)")
     parser.add_argument("--skip-roads", action="store_true")
     parser.add_argument("--skip-ground", action="store_true")
+    parser.add_argument("--skip-water", action="store_true",
+                        help="Skip building water body meshes and bridge decks even if the "
+                             "layout has a non-empty 'water' list")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Seed for building DSL randomness (random()/choice()/chance()). "
+                             "Falls back to layout['seed'] when omitted; omit both for "
+                             "non-deterministic draws")
     parser.add_argument("--terrain-seed", type=int, default=0,
                         help="Seed for the ground's cosmetic surface noise (independent of the "
                              "layout seed; same seed -> same bumps)")
@@ -541,6 +548,11 @@ def build_roads(layout, widthPrimary, widthSecondary, widthLocal=3.0):
     value actually present in layout["roads"] that isn't in the style
     table below falls back to the "secondary"/"collector" styling rather
     than being silently dropped.
+
+    Segments tagged "bridge": True (see pro/city/water.py's
+    insert_bridges) are skipped here -- they're rendered by
+    build_bridges() instead as an elevated deck with piers and railings,
+    not a flat ribbon that would run straight through the water.
     """
     import bpy
 
@@ -557,7 +569,8 @@ def build_roads(layout, widthPrimary, widthSecondary, widthLocal=3.0):
         "local": dict(width=widthLocal, color=(0.33, 0.29, 0.24), matName="LocalLane"),
     }
     fallback = dict(width=widthSecondary, color=(0.36, 0.31, 0.24), matName="PackedEarth")
-    hierarchiesPresent = sorted({r["hierarchy"] for r in layout["roads"]})
+    nonBridgeRoads = [r for r in layout["roads"] if not r.get("bridge")]
+    hierarchiesPresent = sorted({r["hierarchy"] for r in nonBridgeRoads})
     materials = {
         h: _diffuse_material(styles.get(h, fallback)["matName"], styles.get(h, fallback)["color"], 0.92)
         for h in hierarchiesPresent
@@ -565,7 +578,7 @@ def build_roads(layout, widthPrimary, widthSecondary, widthLocal=3.0):
 
     for hierarchy in hierarchiesPresent:
         width = styles.get(hierarchy, fallback)["width"]
-        segments = [r for r in layout["roads"] if r["hierarchy"] == hierarchy]
+        segments = [r for r in nonBridgeRoads if r["hierarchy"] == hierarchy]
         if not segments:
             continue
 
@@ -592,6 +605,211 @@ def build_roads(layout, widthPrimary, widthSecondary, widthLocal=3.0):
         builtObjects.append(curveObj)
 
     return builtObjects
+
+
+def _polygon_centroid(poly):
+    cx = sum(p[0] for p in poly) / len(poly)
+    cy = sum(p[1] for p in poly) / len(poly)
+    return cx, cy
+
+
+def build_water(layout, seed=0):
+    """
+    Renders every entry in layout["water"] (see pro/city/water.py's
+    module docstring for the schema):
+
+    - Linear features (river/stream/creek) become a ribbon mesh along
+      their centerline, reusing the same curve-to-mesh road-profile node
+      group as build_roads() but at the feature's own width and a
+      slightly negative Z so the water surface sits just below grade
+      (and well below any bridge deck crossing it).
+    - Areal features (lake/pond/watershed) become a flat filled polygon
+      at the same recessed Z.
+
+    Returns the list of built objects.
+    """
+    import bpy
+    import bmesh
+
+    waterFeatures = layout.get("water") or []
+    if not waterFeatures:
+        return []
+
+    nodeGroup = _road_profile_node_group()
+    widthSocketId = _width_socket_id(nodeGroup)
+    matSocketId = _socket_id(nodeGroup, "Material")
+    waterMat = _diffuse_material("WaterSurface", (0.16, 0.32, 0.44), roughness=0.15)
+    waterZ = -0.08
+
+    built = []
+    for feat in waterFeatures:
+        name = "Water_%s_%s" % (feat.get("type", "water"), feat.get("id", 0))
+
+        if "path" in feat:
+            curveData = bpy.data.curves.new(name, type="CURVE")
+            curveData.dimensions = "3D"
+            spline = curveData.splines.new("POLY")
+            path = feat["path"]
+            spline.points.add(len(path) - 1)
+            for i, (x, y) in enumerate(path):
+                spline.points[i].co = (x, y, waterZ, 1)
+            curveObj = bpy.data.objects.new(name, curveData)
+            bpy.context.collection.objects.link(curveObj)
+            if curveData.materials:
+                curveData.materials[0] = waterMat
+            else:
+                curveData.materials.append(waterMat)
+            mod = curveObj.modifiers.new("WaterProfile", "NODES")
+            mod.node_group = nodeGroup
+            mod[widthSocketId] = float(feat.get("width", 4.0))
+            mod[matSocketId] = waterMat
+            built.append(curveObj)
+
+        elif "polygon" in feat:
+            poly = feat["polygon"]
+            mesh = bpy.data.meshes.new(name)
+            cx, cy = _polygon_centroid(poly)
+            verts = [(x - cx, y - cy, 0.0) for x, y in poly]
+            bm = bmesh.new()
+            bmVerts = [bm.verts.new(v) for v in verts]
+            try:
+                bm.faces.new(bmVerts)
+            except ValueError:
+                pass  # degenerate polygon; leave as a loose vert ring
+            bm.to_mesh(mesh)
+            bm.free()
+            mesh.materials.append(waterMat)
+            obj = bpy.data.objects.new(name, mesh)
+            obj.location = (cx, cy, waterZ)
+            bpy.context.collection.objects.link(obj)
+            built.append(obj)
+
+    return built
+
+
+# Bridge deck sits this many meters above grade (road ribbons sit at
+# z=0.02 -- see build_roads); piers run from the deck's underside down to
+# well below the water surface (waterZ in build_water) so they visibly
+# plant into the water instead of floating.
+BRIDGE_DECK_HEIGHT = 0.55
+BRIDGE_PIER_DEPTH = -1.0
+BRIDGE_PIER_RADIUS = 0.35
+BRIDGE_RAIL_HEIGHT = 0.5
+BRIDGE_RAIL_THICKNESS = 0.12
+
+
+def _build_bridge_pier(x, y, deck_z, mat):
+    import bpy
+    depth = deck_z - BRIDGE_PIER_DEPTH
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=10, radius=BRIDGE_PIER_RADIUS, depth=depth,
+        location=(x, y, BRIDGE_PIER_DEPTH + depth / 2.0),
+    )
+    obj = bpy.context.object
+    obj.name = "BridgePier"
+    obj.data.materials.append(mat)
+    return obj
+
+
+def _build_bridge_rail(a, b, deck_z, mat, offset):
+    """A thin vertical wall from (a, b) offset sideways by `offset` meters
+    (perpendicular to a-b), standing BRIDGE_RAIL_HEIGHT above the deck."""
+    import bpy
+    import bmesh
+    import math
+
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(dx, dy) or 1.0
+    nx, ny = -dy / length, dx / length  # unit perpendicular
+
+    ax, ay = a[0] + nx * offset, a[1] + ny * offset
+    bx, by = b[0] + nx * offset, b[1] + ny * offset
+    half_t = BRIDGE_RAIL_THICKNESS / 2.0
+    z0, z1 = deck_z, deck_z + BRIDGE_RAIL_HEIGHT
+
+    verts = [
+        (ax - nx * half_t, ay - ny * half_t, z0),
+        (ax + nx * half_t, ay + ny * half_t, z0),
+        (bx + nx * half_t, by + ny * half_t, z0),
+        (bx - nx * half_t, by - ny * half_t, z0),
+    ]
+    mesh = bpy.data.meshes.new("BridgeRail")
+    bm = bmesh.new()
+    bmVerts = [bm.verts.new(v) for v in verts]
+    bm.faces.new(bmVerts)
+    result = bmesh.ops.extrude_face_region(bm, geom=list(bm.faces))
+    extrudedVerts = [g for g in result["geom"] if isinstance(g, bmesh.types.BMVert)]
+    bmesh.ops.translate(bm, verts=extrudedVerts, vec=(0.0, 0.0, z1 - z0))
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.materials.append(mat)
+    obj = bpy.data.objects.new("BridgeRail", mesh)
+    bpy.context.collection.objects.link(obj)
+    return obj
+
+
+def build_bridges(layout, widthPrimary, widthSecondary, widthLocal):
+    """
+    Renders every road segment tagged "bridge": True (see
+    pro/city/water.py's insert_bridges) as an actual bridge: an elevated
+    deck ribbon spanning the water, a pier planted at each end, and two
+    side rails -- instead of build_roads()'s normal flat-on-the-ground
+    ribbon, which would otherwise run straight into/through the water.
+
+    Returns the list of built objects.
+    """
+    import bpy
+
+    segments = [r for r in layout.get("roads", []) if r.get("bridge")]
+    if not segments:
+        return []
+
+    nodeGroup = _road_profile_node_group()
+    widthSocketId = _width_socket_id(nodeGroup)
+    matSocketId = _socket_id(nodeGroup, "Material")
+    deckMat = _diffuse_material("BridgeDeck", (0.45, 0.34, 0.22), roughness=0.8)
+    railMat = _diffuse_material("BridgeRailing", (0.30, 0.28, 0.26), roughness=0.6)
+    pierMat = _diffuse_material("BridgePier", (0.55, 0.54, 0.52), roughness=0.9)
+
+    built = []
+    for i, seg in enumerate(segments):
+        width = _road_width_for_hierarchy(seg.get("hierarchy"), widthPrimary, widthSecondary, widthLocal)
+        (x1, y1), (x2, y2) = seg["start"], seg["end"]
+
+        curveData = bpy.data.curves.new("Bridge_%d" % i, type="CURVE")
+        curveData.dimensions = "3D"
+        spline = curveData.splines.new("POLY")
+        spline.points.add(1)
+        spline.points[0].co = (x1, y1, BRIDGE_DECK_HEIGHT, 1)
+        spline.points[1].co = (x2, y2, BRIDGE_DECK_HEIGHT, 1)
+        curveObj = bpy.data.objects.new("Bridge_%d" % i, curveData)
+        bpy.context.collection.objects.link(curveObj)
+        curveData.materials.append(deckMat)
+        mod = curveObj.modifiers.new("BridgeDeck", "NODES")
+        mod.node_group = nodeGroup
+        mod[widthSocketId] = width
+        mod[matSocketId] = deckMat
+        built.append(curveObj)
+
+        built.append(_build_bridge_pier(x1, y1, BRIDGE_DECK_HEIGHT, pierMat))
+        built.append(_build_bridge_pier(x2, y2, BRIDGE_DECK_HEIGHT, pierMat))
+
+        half_w = width / 2.0
+        built.append(_build_bridge_rail((x1, y1), (x2, y2), BRIDGE_DECK_HEIGHT, railMat, half_w))
+        built.append(_build_bridge_rail((x1, y1), (x2, y2), BRIDGE_DECK_HEIGHT, railMat, -half_w))
+
+    return built
+
+
+def _resolve_rule_path(item, fallback_rule, repo_root=None):
+    """Prefer per-item layout['rule'], else the CLI --rule fallback."""
+    raw = item.get("rule") or fallback_rule
+    if not raw:
+        raise ValueError("No rule path for building item and no fallback --rule")
+    if os.path.isabs(raw):
+        return raw
+    root = repo_root or os.getcwd()
+    return os.path.abspath(os.path.join(root, raw))
 
 
 def build_blocks(layout, ruleFile, maxBlocks=None, setback=3.0, session=None):
@@ -625,7 +843,7 @@ def build_blocks(layout, ruleFile, maxBlocks=None, setback=3.0, session=None):
         )
         create_footprint_from_points(bpy.context, polygon, offset=tuple(block["centroid"]))
         try:
-            session.apply(ruleFile)
+            session.apply(_resolve_rule_path(block, ruleFile))
         except Exception as e:
             print("WARNING: failed to generate block %d: %s" % (block["id"], e), file=sys.stderr)
             failed += 1
@@ -672,7 +890,7 @@ def build_plots(layout, ruleFile, maxPlots=None, session=None):
             bpy.context, plot["polygon"], offset=tuple(plot["centroid"])
         )
         try:
-            session.apply(ruleFile)
+            session.apply(_resolve_rule_path(plot, ruleFile))
         except Exception as e:
             print("WARNING: failed to generate plot %d: %s" % (plot.get("id", i), e), file=sys.stderr)
             failed += 1
@@ -781,7 +999,14 @@ def main():
         print("ERROR: rule file not found: %s" % ruleFile, file=sys.stderr)
         sys.exit(1)
 
-    with GenerationSession(blender_context=bpy.context) as session:
+    session_seed = args.seed
+    if session_seed is None and layout.get("seed") is not None:
+        try:
+            session_seed = int(layout["seed"])
+        except (TypeError, ValueError):
+            session_seed = None
+
+    with GenerationSession(seed=session_seed, blender_context=bpy.context) as session:
         plaza_blocks = [b for b in layout.get("blocks", []) if b.get("role") == "plaza"]
         for plaza in plaza_blocks:
             try:
@@ -804,6 +1029,17 @@ def main():
         if not args.skip_roads:
             roadObjects = build_roads(layout, args.road_width_primary, args.road_width_secondary, args.road_width_local)
             print("Built %d road curve object(s)" % len(roadObjects))
+
+        if not args.skip_water:
+            waterObjects = build_water(layout, seed=args.terrain_seed)
+            if waterObjects:
+                print("Built %d water body object(s)" % len(waterObjects))
+            if not args.skip_roads:
+                bridgeObjects = build_bridges(
+                    layout, args.road_width_primary, args.road_width_secondary, args.road_width_local
+                )
+                if bridgeObjects:
+                    print("Built %d bridge object(s)" % len(bridgeObjects))
 
         if not args.skip_ground:
             radius = float(layout.get("radius") or 170.0)
