@@ -260,7 +260,9 @@ class Context:
 	def prepare(self):
 		"""The method does all necessary preparations for a rule evaluation."""
 		# Resolve deferred ParamFloat (random/choice) and ParamColor (choice)
-		# values. Both expose assignValue(); ParamColor has no .random attr.
+		# values. Both expose assignValue(); ParamColor also has `.random`
+		# (the Choice instance, or None) so a `if param.random` check is
+		# safe, matching ParamFloat.
 		for param in self.params:
 			assign = getattr(param, "assignValue", None)
 			if callable(assign):

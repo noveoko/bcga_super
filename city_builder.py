@@ -931,6 +931,23 @@ def _apply_modifiers_for_export():
     bpy.ops.object.select_all(action="DESELECT")
 
 
+def _bake_world_transforms_for_export():
+    """
+    Collapse object transforms into mesh data so Unreal can spawn each
+    imported static mesh at the origin (vertices already in world meters).
+    """
+    import bpy
+    meshes = [obj for obj in bpy.data.objects if obj.type == "MESH"]
+    if not meshes:
+        return
+    bpy.ops.object.select_all(action="DESELECT")
+    for obj in meshes:
+        obj.select_set(True)
+    bpy.context.view_layer.objects.active = meshes[0]
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    bpy.ops.object.select_all(action="DESELECT")
+
+
 def _player_start(layout):
     import math
     plaza = next((b for b in layout.get("blocks", []) if b.get("role") == "plaza"), None)
@@ -951,7 +968,7 @@ def _player_start(layout):
     yaw = 0.0
     if target and target.get("centroid"):
         yaw = math.atan2(target["centroid"][1] - cy, target["centroid"][0] - cx)
-    return [round(cx, 4), round(cy, 4), 0.15, round(yaw, 6)]
+    return [round(cx, 4), round(cy, 4), 1.8, round(yaw, 6)]
 
 
 def _buildings_meta(layout):
@@ -978,7 +995,22 @@ def _export(outputPath):
     elif ext in (".glb", ".gltf"):
         bpy.ops.export_scene.gltf(filepath=outputPath)
     elif ext == ".fbx":
-        bpy.ops.export_scene.fbx(filepath=outputPath)
+        # Unreal-friendly: Z-up, -Y forward, modifiers already baked by
+        # _apply_modifiers_for_export. Scale stays 1 (meters); import_city.py
+        # applies ×100 on actors / sidecar transforms.
+        bpy.ops.export_scene.fbx(
+            filepath=outputPath,
+            use_selection=False,
+            global_scale=1.0,
+            apply_unit_scale=True,
+            apply_scale_options="FBX_SCALE_ALL",
+            axis_forward="-Y",
+            axis_up="Z",
+            bake_space_transform=True,
+            object_types={"MESH"},
+            use_mesh_modifiers=True,
+            add_leaf_bones=False,
+        )
     else:
         raise ValueError("Unsupported --output extension '%s'" % ext)
 
@@ -1061,7 +1093,8 @@ def main():
 
         if args.game_export:
             _apply_modifiers_for_export()
-            print("Applied modifiers for game export")
+            _bake_world_transforms_for_export()
+            print("Applied modifiers and world transforms for game export")
 
         _export(args.output)
 

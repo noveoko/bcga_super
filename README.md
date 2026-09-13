@@ -37,6 +37,15 @@ blender --background --factory-startup --python city_builder.py -- --layout out/
 
 Open `out/polish_town_1927.blend`. `--max-blocks N` builds only the first N houses (preview). `--skip-roads` / `--skip-ground` skip the cobble ribbons and ground disk.
 
+Playable Unreal export (third-person by default; see `docs/PLAYABLE_CITY.md`):
+
+```powershell
+python pipeline/run_city.py --seed 1927 --output out/playable
+python pipeline/run_city.py --seed 1927 --output out/playable --ue-project path\to\CityGame.uproject
+# First Person template instead:
+python pipeline/run_city.py --seed 1927 --output out/playable --view first-person --ue-project path\to\CityFPS.uproject
+```
+
 Same layout CLI:
 
 ```powershell

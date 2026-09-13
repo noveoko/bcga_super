@@ -6,3 +6,4 @@ _bcga_upstream/
 *.blend1
 .venv/
 out/
+.aider*

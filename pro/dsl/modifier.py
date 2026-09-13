@@ -16,5 +16,5 @@ class Modifier:
 			setattr(self, k, True)
 			self.value = kwargs[k]
 	
-	def execute(self):
+	def execute(self, ctx=None):
 		pass

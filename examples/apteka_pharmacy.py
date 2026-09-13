@@ -51,6 +51,10 @@ SLAB_ELEVATIONS = [0.0, PLINTH_H + GROUND_H, WALL_H]
 
 @rule
 def Begin():
+    # city_builder already stamped a street-aligned plot footprint.
+    if city_block():
+        MainMass()
+        return
     rectangle(BUILDING_WIDTH, BUILDING_DEPTH, MainMass())
     delete()
 

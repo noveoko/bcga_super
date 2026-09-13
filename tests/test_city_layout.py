@@ -16,6 +16,7 @@ from pro.city.layout import (
     generate_polish_town_layout,
     ROAD_WIDTHS,
     DEFAULT_ROAD_WIDTH,
+    POLISH_TOWN_ROLE_RULES,
 )
 
 
@@ -137,3 +138,19 @@ def test_polish_town_houses_never_overlap_a_road(seed):
 def test_too_few_blocks_raises_clear_error():
     with pytest.raises(ValueError):
         generate_city_layout(numBlocks=2, radius=100)
+
+
+def test_polish_town_specialty_plots_get_dedicated_rules():
+    layout = generate_polish_town_layout(seed=1927)
+    by_role = {}
+    for plot in layout["plots"]:
+        by_role.setdefault(plot.get("role"), []).append(plot)
+    for role, rule in POLISH_TOWN_ROLE_RULES.items():
+        plots = by_role.get(role) or []
+        assert plots, "expected at least one %s plot" % role
+        for plot in plots:
+            assert plot.get("rule") == rule, (role, plot.get("id"), plot.get("rule"))
+    for plot in by_role.get("kamienica") or []:
+        assert "rule" not in plot
+    for plot in by_role.get("cottage") or []:
+        assert "rule" not in plot

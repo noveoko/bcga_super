@@ -44,3 +44,14 @@ def test_example_city_building_uses_city_block_helper():
     assert "city_block(" in src
     assert "context.cityBlock" not in src
     assert "@rule\ndef Begin():" in src.replace("\r\n", "\n")
+
+
+@pytest.mark.parametrize("path", [
+    "examples/szkola_school.py",
+    "examples/karczma_inn.py",
+    "examples/apteka_pharmacy.py",
+])
+def test_specialty_rules_use_existing_plot_when_city_block_is_set(path):
+    src = open(path, encoding="utf-8").read().replace("\r\n", "\n")
+    assert "if city_block():" in src
+    assert "MainMass()" in src

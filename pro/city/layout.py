@@ -866,6 +866,23 @@ def _stamp_plot_type(plot, role, rng):
         )
 
 
+# Dedicated massing files for civic/commercial roles. Kamienica/cottage/barn
+# stay on the fallback --rule (examples/polish_town_1927.py). city_builder
+# honors plot["rule"] via _resolve_rule_path.
+POLISH_TOWN_ROLE_RULES = {
+    "school": "examples/szkola_school.py",
+    "karczma": "examples/karczma_inn.py",
+    "apteka": "examples/apteka_pharmacy.py",
+}
+
+
+def _assign_plot_rules(plots):
+    for plot in plots:
+        rule = POLISH_TOWN_ROLE_RULES.get(plot.get("role"))
+        if rule:
+            plot["rule"] = rule
+
+
 def _assign_plot_types(plots, rynek, rng):
     xmin, ymin, xmax, ymax = rynek
     # Prefer plots whose street edge truly kisses the rynek; fall back to a
@@ -1106,6 +1123,7 @@ def generate_polish_town_layout(
     for i, plot in enumerate(plots):
         plot["id"] = i
     _assign_plot_types(plots, (xmin, ymin, xmax, ymax), rng)
+    _assign_plot_rules(plots)
 
     layout["plots"] = plots
     layout["rynek"] = [xmin, ymin, xmax, ymax]

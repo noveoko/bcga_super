@@ -26,7 +26,7 @@ class Param:
 	def getValue(self):
 		return self.value
 
-	def execute(self):
+	def execute(self, ctx=None):
 		pass
 
 
@@ -97,9 +97,19 @@ class ParamColor(Param):
 		if isinstance(value, Choice):
 			self.value = None
 			self.choice = value
+			# Mirrors ParamFloat's `.random` contract (a Random/Choice
+			# instance, or None) so Context.prepare()'s generic "does this
+			# param need a value resolved for this building" check works
+			# the same way for both param() color and float. Without this,
+			# any rule file using param(choice(...)) for a color crashes
+			# every apply with AttributeError, since prepare() unconditionally
+			# reads param.random.
+			self.random = value
 		else:
 			self.value = value
 			self.choice = None
+			self.random = None
+		context.registerParam(self)
 	
 	def getValue(self):
 		self.assignValue()
